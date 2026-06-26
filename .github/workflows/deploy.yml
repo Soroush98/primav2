@@ -45,7 +45,7 @@ jobs:
   # ------------------------------------------------------------- backend
   backend:
     needs: verify
-    if: github.ref == 'refs/heads/main'
+    if: ${{ github.ref == 'refs/heads/main' && vars.GCP_WIF_PROVIDER != '' }}
     runs-on: ubuntu-latest
     outputs:
       url: ${{ steps.deploy.outputs.url }}
@@ -74,7 +74,7 @@ jobs:
   # ------------------------------------------------------------ frontend
   frontend:
     needs: backend
-    if: github.ref == 'refs/heads/main'
+    if: ${{ github.ref == 'refs/heads/main' && vars.GCP_WIF_PROVIDER != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
