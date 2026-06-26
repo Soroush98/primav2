@@ -1,0 +1,49 @@
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+export interface ScorePoint {
+  i: number;
+  score: number;
+  flag: boolean;
+}
+export interface TopWindow {
+  i: number;
+  label: string;
+  score: number;
+}
+export interface Detection {
+  n: number;
+  flagged: number;
+  threshold?: number;
+  score_max?: number;
+  top_windows?: TopWindow[];
+  points?: ScorePoint[];
+  note?: string;
+  grade?: Record<string, number> | null;
+}
+
+export interface RootCause {
+  ranked_features?: [string, number][];
+}
+
+export interface AnalyzeResponse {
+  question: string;
+  briefing: string;
+  focus?: Record<string, unknown> | null;
+  sql?: string | null;
+  detection?: Detection | null;
+  root_cause?: RootCause | null;
+  error?: string | null;
+}
+
+export async function analyze(question: string): Promise<AnalyzeResponse> {
+  const res = await fetch(`${API_BASE}/api/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Request failed (${res.status}): ${detail}`);
+  }
+  return res.json() as Promise<AnalyzeResponse>;
+}

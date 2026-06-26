@@ -1,0 +1,83 @@
+{
+  "device": "mps",
+  "omni_kwargs": {
+    "window": 100,
+    "z_dim": 3,
+    "hidden": 100,
+    "n_flows": 2,
+    "epochs": 15,
+    "batch": 128,
+    "mc_samples": 10,
+    "lr": 0.001,
+    "seed": 0
+  },
+  "paper_pa_f1": 0.88,
+  "rows": [
+    {
+      "machine": "machine-1-1",
+      "prevalence": 0.09459601811861372,
+      "baseline": {
+        "prevalence": 0.09459601811861372,
+        "auc_pr": 0.45267256643128473,
+        "raw_best_f1": 0.33928031448442697,
+        "pa_best_f1": 0.9986991265564021,
+        "raw_precision": 0.9151712887438825,
+        "raw_recall": 0.20824053452115812,
+        "inflation_gap": 0.6594188120719752
+      },
+      "omnianomaly": {
+        "prevalence": 0.09459601811861372,
+        "auc_pr": 0.5229446718199877,
+        "raw_best_f1": 0.17284188239822926,
+        "pa_best_f1": 0.3411330049261084,
+        "raw_precision": 0.09459601811861372,
+        "raw_recall": 1.0,
+        "inflation_gap": 0.16829112252787912
+      }
+    },
+    {
+      "machine": "machine-2-1",
+      "prevalence": 0.049379589769561916,
+      "baseline": {
+        "prevalence": 0.049379589769561916,
+        "auc_pr": 0.07941619291579995,
+        "raw_best_f1": 0.1337361530715005,
+        "pa_best_f1": 0.9692832764505119,
+        "raw_precision": 0.08748353096179183,
+        "raw_recall": 0.28376068376068375,
+        "inflation_gap": 0.8355471233790115
+      },
+      "omnianomaly": {
+        "prevalence": 0.049379589769561916,
+        "auc_pr": 0.2155401511236632,
+        "raw_best_f1": 0.28939901986071703,
+        "pa_best_f1": 0.9417433201927288,
+        "raw_precision": 0.20724048762467676,
+        "raw_recall": 0.4794871794871795,
+        "inflation_gap": 0.6523443003320117
+      }
+    },
+    {
+      "machine": "machine-3-7",
+      "prevalence": 0.015119317192126808,
+      "baseline": {
+        "prevalence": 0.015119317192126808,
+        "auc_pr": 0.04641922473657991,
+        "raw_best_f1": 0.06334841628959276,
+        "pa_best_f1": 0.9257425742574258,
+        "raw_precision": 0.03350172826375964,
+        "raw_recall": 0.5806451612903226,
+        "inflation_gap": 0.862394157967833
+      },
+      "omnianomaly": {
+        "prevalence": 0.015119317192126808,
+        "auc_pr": 0.10833654231439724,
+        "raw_best_f1": 0.1284796573875803,
+        "pa_best_f1": 0.8348993288590603,
+        "raw_precision": 0.9090909090909091,
+        "raw_recall": 0.06912442396313365,
+        "inflation_gap": 0.70641967147148
+      }
+    }
+  ]
+}
