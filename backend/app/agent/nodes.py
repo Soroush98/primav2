@@ -232,7 +232,20 @@ class AgentNodes:
             note = "Chronos forecaster unavailable / needs a per-machine series; used baseline"
             return self._assemble(rows, cols, scores, thr, "baseline", note=note)
         scores, thr = fc
-        return self._assemble(rows, cols, scores, thr, "chronos")
+        out = self._assemble(rows, cols, scores, thr, "chronos")
+        detail = getattr(self.forecaster, "last_detail", None)
+        if detail:  # actual-vs-forecast band of the top feature, for the UI plot
+            fi = detail["feature"]
+            out["detection"]["forecast"] = {
+                "feature": self.omni_features[fi] if fi < len(self.omni_features) else f"f{fi}",
+                "actual": detail["actual"],
+                "median": detail["median"],
+                "lo": detail["lo"],
+                "hi": detail["hi"],
+                "score": detail["score"],
+                "threshold": thr,
+            }
+        return out
 
     def _baseline_scores(self, X: np.ndarray) -> tuple[np.ndarray, float]:
         det = self.detector_factory().fit(X)
@@ -353,7 +366,7 @@ class AgentNodes:
         return {"root_cause": {"ranked_features": ranked}}
 
     async def narrator(self, state: dict) -> dict:
-        det = {k: v for k, v in (state.get("detection") or {}).items() if k != "points"}
+        det = {k: v for k, v in (state.get("detection") or {}).items() if k not in ("points", "forecast")}
         briefing = await self.llm.generate(
             f"Question: {state['question']}\n"
             f"Detection: {det}\n"

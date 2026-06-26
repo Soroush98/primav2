@@ -13,7 +13,8 @@ export interface Detection {
   flagged: number;
   threshold?: number;
   score_max?: number;
-  detector?: string;   // which arm ran: "baseline" | "omnianomaly"
+  detector?: string;   // which arm ran: "baseline" | "omnianomaly" | "chronos"
+  forecast?: ForecastDetail;  // Chronos arm only: actual vs forecast band
   top_windows?: TopWindow[];
   points?: ScorePoint[];
   note?: string;
@@ -21,6 +22,16 @@ export interface Detection {
 }
 
 export type DetectorMode = "auto" | "baseline" | "omnianomaly" | "forecast";
+
+export interface ForecastDetail {
+  feature: string;
+  actual: number[];
+  median: number[];
+  lo: number[];
+  hi: number[];
+  score: number[];
+  threshold: number;
+}
 
 export interface RootCause {
   ranked_features?: [string, number][];

@@ -42,12 +42,15 @@ class ChronosForecaster:
         self.max_score = max_score
         self.q = q
         self.threshold_: float | None = None
+        # actual-vs-forecast detail of the top-residual feature, for the UI plot.
+        self.last_detail: dict | None = None
 
     def score(self, X: np.ndarray) -> np.ndarray:
         """``X``: (T, F) per-machine series → (T,) forecast-residual anomaly score."""
         X = np.asarray(X, dtype=np.float32)
         t, f = X.shape
         scores = np.zeros(t, dtype=float)
+        self.last_detail = None
         if t <= self.context:
             return scores  # too short to forecast — caller falls back
 
@@ -67,8 +70,21 @@ class ChronosForecaster:
         lo, med, hi = qn[:, 0], qn[:, 1], qn[:, 2]
         actual = np.concatenate([X[positions, j] for j in range(f)])
         resid = np.abs(actual - med) / np.maximum(hi - lo, 1e-6)
-        per_feat = resid.reshape(f, len(positions))  # (F, P)
-        scores[positions] = per_feat.mean(axis=0)
+        p = len(positions)
+        per_feat = resid.reshape(f, p)  # (F, P)
+        agg = per_feat.mean(axis=0)
+        scores[positions] = agg
+
+        # Stash actual-vs-forecast for the most-deviating feature (drives the UI plot).
+        top = int(per_feat.mean(axis=1).argmax())
+        self.last_detail = {
+            "feature": top,
+            "actual": actual.reshape(f, p)[top].tolist(),
+            "median": med.reshape(f, p)[top].tolist(),
+            "lo": lo.reshape(f, p)[top].tolist(),
+            "hi": hi.reshape(f, p)[top].tolist(),
+            "score": agg.tolist(),
+        }
 
         nz = scores[scores > 0]
         if len(nz) >= 20:

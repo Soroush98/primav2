@@ -4,6 +4,7 @@ import { useState } from "react";
 import { analyze, type AnalyzeResponse, type DetectorMode } from "./lib/api";
 import Architecture from "./components/Architecture";
 import ScoreChart from "./components/ScoreChart";
+import ForecastChart from "./components/ForecastChart";
 
 const EXAMPLES = [
   "Give me a cluster health check — which machines look anomalous?",
@@ -190,11 +191,17 @@ export default function Home() {
                 </div>
               </div>
 
-              {det?.points && det.points.length > 0 && (
+              {((det?.points && det.points.length > 0) || det?.forecast) && (
                 <>
-                  <div className="section-title">Anomaly windows</div>
+                  <div className="section-title">
+                    {det?.detector === "chronos" && det?.forecast ? "Forecast vs actual" : "Anomaly windows"}
+                  </div>
                   <div className="card">
-                    <ScoreChart det={det} />
+                    {det?.detector === "chronos" && det?.forecast ? (
+                      <ForecastChart det={det} />
+                    ) : (
+                      <ScoreChart det={det} />
+                    )}
                     {det.top_windows && det.top_windows.length > 0 && (
                       <div style={{ marginTop: 14 }}>
                         <h3>Top flagged windows</h3>
