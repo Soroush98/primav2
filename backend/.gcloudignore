@@ -1,0 +1,14 @@
+# What `gcloud builds submit` / `run deploy --source` UPLOAD as build context.
+# Without this, gcloud uploads everything here — including the ~1 GB local .venv.
+# Keep: app/, scripts/, pyproject.toml, uv.lock, Dockerfile*.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+.env.*
+omni_out/
+*.pt
+.git/
+node_modules/

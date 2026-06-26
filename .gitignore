@@ -36,3 +36,4 @@ data/
 *.db
 *.ckpt
 *.pt
+omni_out/

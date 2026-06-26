@@ -39,6 +39,11 @@ class OmniAnomalyDetector:
         self.lr = lr
         self.seed = seed
         self.device = torch.device(device)
+        # Architecture knobs kept as attributes so save()/load() can reconstruct.
+        self.n_features = n_features
+        self.z_dim = z_dim
+        self.hidden = hidden
+        self.n_flows = n_flows
         self.model = OmniAnomaly(n_features, z_dim, hidden, n_flows).to(self.device)
         self.mean_: np.ndarray | None = None
         self.std_: np.ndarray | None = None
@@ -58,12 +63,36 @@ class OmniAnomalyDetector:
         return torch.tensor(W, dtype=torch.float32, device=self.device)
 
     def fit(self, train: np.ndarray) -> list[float]:
-        torch.manual_seed(self.seed)
+        """Fit on a single ``(n_timesteps, n_features)`` series."""
         train = np.asarray(train, dtype=np.float32)
         self.mean_ = train.mean(axis=0)
         self.std_ = train.std(axis=0) + 1e-6
-        tensor = self._tensor(self._windows(self._standardize(train)))
+        return self._fit_tensor(self._tensor(self._windows(self._standardize(train))))
 
+    def fit_series(self, series: list[np.ndarray]) -> list[float]:
+        """Fit one GLOBAL model on many independent series (e.g. one per machine).
+
+        Sliding windows are built WITHIN each series only — none span a machine
+        boundary — while standardization and the POT threshold are pooled across the
+        whole set. This is the production path: a single model that scores any
+        machine, including ones it never trained on.
+        """
+        arrs = [np.asarray(s, dtype=np.float32) for s in series]
+        if not arrs:
+            raise ValueError("fit_series got no series")
+        stacked = np.concatenate(arrs, axis=0)
+        self.mean_ = stacked.mean(axis=0)
+        self.std_ = stacked.std(axis=0) + 1e-6
+        per_series = [
+            self._windows(self._standardize(s)) for s in arrs if len(s) >= self.window
+        ]
+        if not per_series:
+            raise ValueError(f"no series is at least window={self.window} long")
+        return self._fit_tensor(self._tensor(np.concatenate(per_series, axis=0)))
+
+    def _fit_tensor(self, tensor: torch.Tensor) -> list[float]:
+        """Shared training loop over a (n_windows, window, n_features) tensor."""
+        torch.manual_seed(self.seed)
         opt = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         history: list[float] = []
         self.model.train()
@@ -123,3 +152,47 @@ class OmniAnomalyDetector:
             _, pd = self.model.score_last(tensor[i : i + self.batch], self.mc_samples)
             per_dim.append((-pd).cpu().numpy())
         return self._align(X, np.concatenate(per_dim))
+
+    def save(self, path: str) -> None:
+        """Serialize architecture + weights + standardization + threshold to a local
+        file. Reconstruct a ready-to-score detector with ``OmniAnomalyDetector.load``.
+        (GCS upload is the caller's job — keeps this module torch-only.)"""
+        if self.mean_ is None or self.threshold_ is None:
+            raise RuntimeError("fit the detector before save()")
+        torch.save(
+            {
+                "config": {
+                    "n_features": self.n_features,
+                    "window": self.window,
+                    "z_dim": self.z_dim,
+                    "hidden": self.hidden,
+                    "n_flows": self.n_flows,
+                    "mc_samples": self.mc_samples,
+                    "batch": self.batch,
+                    "q": self.q,
+                },
+                "model_state": self.model.state_dict(),
+                "mean": np.asarray(self.mean_, dtype=np.float32),
+                "std": np.asarray(self.std_, dtype=np.float32),
+                "threshold": float(self.threshold_),
+            },
+            path,
+        )
+
+    @classmethod
+    def load(cls, path: str, device: str = "cpu") -> "OmniAnomalyDetector":
+        """Load a checkpoint written by ``save`` into a detector ready for ``score``."""
+        ckpt = torch.load(path, map_location=device, weights_only=False)
+        c = ckpt["config"]
+        det = cls(
+            n_features=c["n_features"], window=c["window"], z_dim=c["z_dim"],
+            hidden=c["hidden"], n_flows=c["n_flows"], mc_samples=c["mc_samples"],
+            batch=c["batch"], q=c["q"], device=device,
+        )
+        det.model.load_state_dict(ckpt["model_state"])
+        det.model.to(det.device)
+        det.model.eval()
+        det.mean_ = np.asarray(ckpt["mean"], dtype=np.float32)
+        det.std_ = np.asarray(ckpt["std"], dtype=np.float32)
+        det.threshold_ = float(ckpt["threshold"])
+        return det

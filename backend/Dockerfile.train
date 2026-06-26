@@ -1,0 +1,24 @@
+# Training image for the run-to-completion Vertex AI custom job (GPU).
+#
+# Unlike the serving Dockerfile (CPU, no torch), this image HAS torch + CUDA: it
+# trains ONE global OmniAnomaly model, writes a checkpoint to GCS, and the job then
+# terminates. It never serves traffic and never sits idle. The base image already
+# ships a CUDA + cuDNN build of torch, so we only add the few cloud/SciPy deps —
+# and deliberately do NOT upgrade numpy (keeps torch's ABI-matched build).
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+RUN pip install --no-cache-dir \
+    "google-cloud-bigquery>=3.27" \
+    "google-cloud-storage>=2.18" \
+    "scipy>=1.14" \
+    "scikit-learn>=1.5"
+
+COPY app ./app
+COPY scripts ./scripts
+
+# Vertex passes config via env (see scripts/submit_train_job.sh) and AIP_MODEL_DIR.
+ENTRYPOINT ["python", "scripts/train_omni.py"]
