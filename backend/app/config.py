@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # BigQuery
     bigquery_dataset: str = "alibaba_cluster"
     bigquery_max_bytes_billed: int = 50_000_000_000  # ~50 GB cost cap per query
+    bigquery_max_rows: int = 50_000  # cap rows materialized client-side (bounds memory)
 
     # CORS
     frontend_origin: str = "http://localhost:3000"

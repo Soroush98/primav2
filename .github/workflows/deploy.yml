@@ -63,7 +63,7 @@ jobs:
           service: prima-backend
           source: backend
           region: ${{ env.REGION }}
-          flags: --service-account=${{ vars.GCP_RUNTIME_SA }} --allow-unauthenticated --max-instances=3 --concurrency=40 --memory=512Mi
+          flags: --service-account=${{ vars.GCP_RUNTIME_SA }} --allow-unauthenticated --max-instances=3 --concurrency=40 --memory=1Gi
           env_vars: |-
             GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT }}
             GOOGLE_CLOUD_LOCATION=global

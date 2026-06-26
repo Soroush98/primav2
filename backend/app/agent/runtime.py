@@ -18,6 +18,7 @@ def get_agent():
         runner=BigQueryRunner(
             settings.google_cloud_project,
             max_bytes_billed=settings.bigquery_max_bytes_billed,
+            max_rows=settings.bigquery_max_rows,
         ),
         schema_ddl=SCHEMA_HINT,
     )

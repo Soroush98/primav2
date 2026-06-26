@@ -9,6 +9,8 @@ data warehouse that *executes* it. Defence in depth:
      data the credentials happen to have access to.
   3. `maximum_bytes_billed` cap + job timeout — bounds cost/latency so a crafted
      full-table scan cannot run up the bill or hang the request (cost-DoS).
+  4. `max_results` row cap — bounds how many rows are materialized client-side, so
+     a query that returns hundreds of thousands of rows cannot OOM the container.
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ class BigQueryRunner:
         project: str,
         *,
         max_bytes_billed: int = 50_000_000_000,  # ~50 GB — bounds cost-DoS
+        max_rows: int = 50_000,  # rows materialized client-side — bounds memory (OOM)
         job_timeout: float = 60.0,
     ) -> None:
         from google.cloud import bigquery  # lazy: avoids client construction at import
@@ -60,6 +63,7 @@ class BigQueryRunner:
         self._project = project
         self._client = bigquery.Client(project=project)
         self._max_bytes = max_bytes_billed
+        self._max_rows = max_rows
         self._timeout = job_timeout
 
     def run_query(self, sql: str) -> list[dict]:
@@ -70,4 +74,7 @@ class BigQueryRunner:
             use_query_cache=True,
         )
         job = self._client.query(sql, job_config=config, timeout=self._timeout)
-        return [dict(row) for row in job.result(timeout=self._timeout)]
+        # max_results bounds the rows downloaded into memory regardless of how many
+        # the (LLM-authored) query would return — the OOM guard.
+        rows = job.result(timeout=self._timeout, max_results=self._max_rows)
+        return [dict(row) for row in rows]

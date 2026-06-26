@@ -122,7 +122,11 @@ class AgentNodes:
                 f"Schema:\n{self.schema}\n\n"
                 f"Question: {state['question']}\nIntent: {state.get('focus')}\n\n"
                 "Write ONE read-only BigQuery SQL (SELECT/WITH only) returning per-machine/per-bin "
-                "numeric metrics plus machine_id (and bin for time order). Reply with SQL only.",
+                "numeric metrics plus machine_id (and bin for time order). "
+                "Scope tightly: prefer `usage_5min`; default to the LATEST bin only "
+                "(one row per machine, ~4k rows) unless the question explicitly asks for a time "
+                "range — then bound it to a small recent window. ALWAYS end with an explicit "
+                "`LIMIT 50000` as a backstop. Reply with SQL only.",
                 system="You author safe, read-only BigQuery SQL. SELECT/WITH only.",
             )
         )

@@ -39,7 +39,7 @@ Source-deploy builds [`backend/Dockerfile`](backend/Dockerfile) with Cloud Build
 cd backend
 gcloud run deploy prima-backend \
   --source . --region $REGION --service-account $SA \
-  --allow-unauthenticated \
+  --allow-unauthenticated --memory=1Gi \
   --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=gemini-2.5-flash,BIGQUERY_DATASET=alibaba_cluster,FRONTEND_ORIGIN=*"
 
 BACKEND_URL=$(gcloud run services describe prima-backend --region $REGION --format='value(status.url)')
