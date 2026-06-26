@@ -1,0 +1,7 @@
+# What `gcloud run deploy --source` uploads. Without this, the local node_modules
+# (~450M) + .next (~118M) get uploaded. The image rebuilds deps itself (npm ci).
+node_modules/
+.next/
+.git/
+.env*.local
+npm-debug.log*

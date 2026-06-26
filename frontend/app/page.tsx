@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { analyze, type AnalyzeResponse, type DetectorMode } from "./lib/api";
 import Architecture from "./components/Architecture";
 import ScoreChart from "./components/ScoreChart";
@@ -42,13 +42,6 @@ export default function Home() {
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    // Kick off the initial analysis once on mount so the dashboard isn't empty.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    run(question);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const det = result?.detection ?? null;
   const ranked = result?.root_cause?.ranked_features ?? [];
@@ -148,6 +141,15 @@ export default function Home() {
               <div className="muted" style={{ marginTop: 6 }}>
                 Is the backend running? <code>uv run fastapi dev app/main.py</code> in <code>backend/</code>.
               </div>
+            </div>
+          )}
+
+          {!result && !error && !loading && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <p className="muted" style={{ margin: 0 }}>
+                Pick an example above or ask a question to run the agent fleet. Choose a detector
+                arm, or leave it on <strong>Auto</strong>.
+              </p>
             </div>
           )}
 
