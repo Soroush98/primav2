@@ -1,5 +1,3 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
 export interface ScorePoint {
   i: number;
   score: number;
@@ -36,7 +34,9 @@ export interface AnalyzeResponse {
 }
 
 export async function analyze(question: string): Promise<AnalyzeResponse> {
-  const res = await fetch(`${API_BASE}/api/analyze`, {
+  // Same-origin: hits the Next.js route handler, which proxies to the backend
+  // server-side and adds the API key (kept out of the browser).
+  const res = await fetch(`/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question }),

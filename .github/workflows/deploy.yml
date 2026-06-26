@@ -63,12 +63,13 @@ jobs:
           service: prima-backend
           source: backend
           region: ${{ env.REGION }}
-          flags: --service-account=${{ vars.GCP_RUNTIME_SA }} --allow-unauthenticated
+          flags: --service-account=${{ vars.GCP_RUNTIME_SA }} --allow-unauthenticated --max-instances=3 --concurrency=40 --memory=512Mi
           env_vars: |-
             GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT }}
             GOOGLE_CLOUD_LOCATION=global
             GEMINI_MODEL=gemini-2.5-flash
             BIGQUERY_DATASET=alibaba_cluster
+            API_KEY=${{ secrets.BACKEND_API_KEY }}
             FRONTEND_ORIGIN=*
 
   # ------------------------------------------------------------ frontend
@@ -84,27 +85,15 @@ jobs:
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build image with the backend URL baked in (NEXT_PUBLIC_API_URL)
-        run: |
-          gcloud auth configure-docker "$REGION-docker.pkg.dev" -q
-          gcloud artifacts repositories create web --repository-format=docker \
-            --location="$REGION" 2>/dev/null || true
-          IMAGE="$REGION-docker.pkg.dev/$PROJECT/web/prima-frontend:${{ github.sha }}"
-          docker build \
-            --build-arg NEXT_PUBLIC_API_URL="${{ needs.backend.outputs.url }}" \
-            -t "$IMAGE" frontend
-          docker push "$IMAGE"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
-
-      - id: deploy
-        uses: google-github-actions/deploy-cloudrun@v2
+      # The frontend proxies to the backend SERVER-SIDE (see app/api/analyze/route.ts),
+      # so the backend URL + API key are runtime env vars — no build arg, no secret in
+      # the browser. Source-deploy builds the standalone image via Cloud Build.
+      - uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: prima-frontend
-          image: ${{ env.IMAGE }}
+          source: frontend
           region: ${{ env.REGION }}
-          flags: --allow-unauthenticated
-
-      - name: Lock backend CORS to the deployed frontend
-        run: |
-          gcloud run services update prima-backend --region "$REGION" \
-            --update-env-vars "FRONTEND_ORIGIN=${{ steps.deploy.outputs.url }}"
+          flags: --allow-unauthenticated --max-instances=3 --concurrency=40 --memory=512Mi
+          env_vars: |-
+            BACKEND_URL=${{ needs.backend.outputs.url }}
+            BACKEND_API_KEY=${{ secrets.BACKEND_API_KEY }}

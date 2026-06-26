@@ -1,13 +1,12 @@
 # primav2 frontend — Next.js 16 (standalone) on Cloud Run.
-# NEXT_PUBLIC_API_URL is inlined at BUILD time, so the backend URL is a build arg.
+# The backend URL + API key are read at RUNTIME by the /api/analyze route handler
+# (BACKEND_URL, BACKEND_API_KEY) — nothing backend-specific is baked into the build.
 FROM node:22-slim AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
-    NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM node:22-slim AS runner

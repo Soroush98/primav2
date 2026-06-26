@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # CORS
     frontend_origin: str = "http://localhost:3000"
 
+    # API protection. Auth is enforced only when api_key is set (prod); empty = open (local dev).
+    api_key: str = ""
+    rate_limit_per_min: int = 30  # per client IP, per instance; 0 disables
+
 
 @lru_cache
 def get_settings() -> Settings:

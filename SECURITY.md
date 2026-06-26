@@ -32,6 +32,10 @@ our code before BigQuery sees it.
 | 7 | **CORS allow-list** — locked to `FRONTEND_ORIGIN`, methods `GET/POST` | [`main.py`](backend/app/main.py) | cross-origin abuse from arbitrary sites |
 | 8 | **No static credentials** — Gemini uses Application Default Credentials; no API keys in code or env | [`gemini.py`](backend/app/llm/gemini.py) | key leakage |
 | 9 | **Secrets ignored by git** — `.env`, `*.key`, `*-service-account*.json`, `data/` are git-ignored | [`.gitignore`](.gitignore) | secret/PII commit |
+| 10 | **API key on `/api/analyze`** — constant-time `X-API-Key` check; the key lives server-side in the Next.js proxy ([`route.ts`](frontend/app/api/analyze/route.ts)), never in the browser | [`security.py`](backend/app/api/security.py) | anonymous abuse of a paid endpoint |
+| 11 | **Rate limiting** — per-IP sliding window (default 30/min) → `429` | [`security.py`](backend/app/api/security.py) | request-flood / cost abuse |
+| 12 | **Scale + budget caps** — Cloud Run `max-instances=3`, `concurrency=40`; a $25/mo billing budget with 50/90/100% alerts | deploy flags / GCP billing | runaway compute cost |
+| 13 | **Keyless CI deploy** — GitHub→GCP via Workload Identity Federation, scoped to this repo; no SA JSON key stored | [`deploy.yml`](.github/workflows/deploy.yml) | CI credential leakage |
 
 The agent also fails **closed and gracefully**: a rejected or failing query is caught,
 recorded as `error`, and surfaced to the narrator — it never crashes the request or
@@ -49,9 +53,10 @@ Ranked; none block local/single-user use, all matter before a multi-tenant deplo
 2. **Client error sanitization.** `error` strings (BigQuery messages) are returned to
    the client and can disclose schema/internal detail. Log them server-side; return a
    generic message to the caller.
-3. **AuthN/AuthZ + rate limiting on the API.** `/api/analyze` is currently unauthenticated.
-   Add an identity check and per-caller rate limiting before exposing it publicly — each
-   call costs Gemini + BigQuery spend.
+3. **Stronger auth (done at the shared-secret level).** `/api/analyze` now requires a
+   server-held API key + per-IP rate limiting (controls #10–#11), so it is no longer
+   anonymously abusable. For a multi-user product, upgrade the shared secret to real
+   per-user identity (OAuth / IAP) and move the key to Secret Manager.
 4. **Prompt-injection monitoring.** The allow-list + read-only guard contain the blast
    radius, but log generated SQL and alert on rejections to catch probing.
 5. **Pin/scan dependencies.** `uv.lock` pins the backend; run dependency and image
