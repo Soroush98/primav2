@@ -25,7 +25,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Backend — lint + tests
         working-directory: backend
@@ -35,6 +35,13 @@ jobs:
           uv sync
           uv run ruff check app scripts
           uv run pytest -q          # torch-only tests self-skip (importorskip)
+
+      - name: Frontend — set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'        # match frontend/Dockerfile (node:24-slim) — no CI/prod drift
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Frontend — build
         working-directory: frontend
@@ -50,15 +57,15 @@ jobs:
     outputs:
       url: ${{ steps.deploy.outputs.url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       - id: deploy
-        uses: google-github-actions/deploy-cloudrun@v2
+        uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: prima-backend
           source: backend
@@ -78,17 +85,17 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' && vars.GCP_WIF_PROVIDER != '' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: google-github-actions/auth@v2
+      - uses: actions/checkout@v7
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
 
       # The frontend proxies to the backend SERVER-SIDE (see app/api/analyze/route.ts),
       # so the backend URL + API key are runtime env vars — no build arg, no secret in
       # the browser. Source-deploy builds the standalone image via Cloud Build.
-      - uses: google-github-actions/deploy-cloudrun@v2
+      - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: prima-frontend
           source: frontend
