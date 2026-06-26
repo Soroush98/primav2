@@ -87,9 +87,10 @@ export default function Home() {
         <span className="badge live">● Live Gemini agents · BigQuery</span>
       </div>
       <div className="subtitle">
-        A LangGraph agent fleet that autonomously writes read-only SQL, detects anomalies, and
-        diagnoses root cause over <strong>Alibaba cluster-trace-v2018</strong> telemetry (~247M
-        samples) in BigQuery — reasoned by Gemini 2.5 Flash on Vertex AI.
+        A LangGraph agent fleet that autonomously writes read-only SQL, then{" "}
+        <strong>routes to one of three anomaly detectors</strong> (MAD/EVT · OmniAnomaly ·
+        Chronos-Bolt) and diagnoses root cause over <strong>Alibaba cluster-trace-v2018</strong>{" "}
+        telemetry (~247M samples) in BigQuery — reasoned by Gemini 2.5 Flash on Vertex AI.
       </div>
 
       <div className="tabs">
