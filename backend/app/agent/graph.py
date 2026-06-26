@@ -18,6 +18,7 @@ def build_graph(nodes: AgentNodes):
     builder.add_node("sql_analyst", nodes.sql_analyst)
     builder.add_node("detector_baseline", nodes.detector_baseline)
     builder.add_node("detector_omni", nodes.detector_omni)
+    builder.add_node("detector_forecast", nodes.detector_forecast)
     builder.add_node("root_cause", nodes.root_cause)
     builder.add_node("narrator", nodes.narrator)
 
@@ -29,11 +30,12 @@ def build_graph(nodes: AgentNodes):
         {
             "detector_baseline": "detector_baseline",
             "detector_omni": "detector_omni",
-            # "detector_forecast": "detector_forecast",  # ← 3rd arm slots in here
+            "detector_forecast": "detector_forecast",
         },
     )
     builder.add_edge("detector_baseline", "root_cause")
     builder.add_edge("detector_omni", "root_cause")
+    builder.add_edge("detector_forecast", "root_cause")
     builder.add_edge("root_cause", "narrator")
     builder.add_edge("narrator", END)
     return builder.compile()

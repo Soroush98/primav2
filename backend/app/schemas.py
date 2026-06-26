@@ -2,9 +2,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# auto = data shape decides; baseline = force MAD/EVT; omnianomaly = force the
-# deep-learning arm (steers the SQL to a per-machine time series it can window).
-DetectorMode = Literal["auto", "baseline", "omnianomaly"]
+# auto = data shape decides; baseline = force MAD/EVT; omnianomaly / forecast force
+# the deep-learning / Chronos-Bolt arms (both steer the SQL to a per-machine series).
+DetectorMode = Literal["auto", "baseline", "omnianomaly", "forecast"]
 
 
 class AnalyzeRequest(BaseModel):

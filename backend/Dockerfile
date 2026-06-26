@@ -20,6 +20,13 @@ RUN uv sync --frozen --no-dev
 RUN uv pip install --no-cache google-cloud-storage \
  && uv pip install --no-cache --index-url https://download.pytorch.org/whl/cpu torch
 
+# Chronos-Bolt forecaster arm: install + BAKE the tiny model into the image so cold
+# starts never hit the HuggingFace Hub. transformers is heavy — this grows the image;
+# the arm is opt-in via CHRONOS_MODEL (unset ⇒ "forecast" mode falls back to baseline).
+ENV HF_HOME=/app/hf_cache
+RUN uv pip install --no-cache chronos-forecasting \
+ && uv run --no-sync python -c "from chronos import BaseChronosPipeline; BaseChronosPipeline.from_pretrained('amazon/chronos-bolt-tiny')"
+
 # App source.
 COPY app ./app
 

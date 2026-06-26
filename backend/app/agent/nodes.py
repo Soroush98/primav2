@@ -9,7 +9,7 @@ import re
 import numpy as np
 
 from app.agent.bigquery_tool import QueryRunner, assert_read_only
-from app.detectors.baseline import BaselineDetector
+from app.detectors.baseline import BaselineDetector, pot_threshold
 from app.eval.metrics import evaluate
 
 # Real schema, introspected from the loaded tables (see warehouse/alibaba_windowing.sql).
@@ -119,6 +119,7 @@ class AgentNodes:
         schema_ddl: str = SCHEMA_HINT,
         detector_factory=BaselineDetector,
         omni=None,                       # pretrained OmniAnomaly detector, or None
+        forecaster=None,                 # Chronos-Bolt forecaster, or None
         omni_features=OMNI_FEATURES,
     ) -> None:
         self.llm = llm
@@ -126,6 +127,7 @@ class AgentNodes:
         self.schema = schema_ddl
         self.detector_factory = detector_factory
         self.omni = omni
+        self.forecaster = forecaster
         self.omni_features = list(omni_features)
 
     async def orchestrator(self, state: dict) -> dict:
@@ -138,14 +140,14 @@ class AgentNodes:
         return {"focus": _safe_json(text)}
 
     async def sql_analyst(self, state: dict) -> dict:
-        # The requested detector mode steers the QUERY SHAPE: OmniAnomaly needs a
-        # per-machine time series; the baseline works on a latest-bin snapshot.
-        if state.get("detector") == "omnianomaly":
+        # The requested detector mode steers the QUERY SHAPE: OmniAnomaly and Chronos
+        # need a per-machine time series; the baseline works on a latest-bin snapshot.
+        if state.get("detector") in ("omnianomaly", "forecast"):
             guidance = (
-                "TEMPORAL mode (for OmniAnomaly): return ONE machine's full per-bin series from "
-                "`usage_5min` (machine_id, bin, cpu, mem, net_in, net_out, disk_io) ORDERED BY bin "
-                "— at least ~200 consecutive bins. NEVER hardcode a machine_id; pick one from the "
-                "data (e.g. the machine_id with the most rows)."
+                "TEMPORAL mode (for OmniAnomaly / Chronos): return ONE machine's full per-bin "
+                "series from `usage_5min` (machine_id, bin, cpu, mem, net_in, net_out, disk_io) "
+                "ORDERED BY bin — at least ~200 consecutive bins. NEVER hardcode a machine_id; "
+                "pick one from the data (e.g. the machine_id with the most rows)."
             )
         else:
             guidance = (
@@ -185,6 +187,8 @@ class AgentNodes:
             return "detector_baseline"
         if mode == "omnianomaly":
             return "detector_omni"
+        if mode == "forecast":
+            return "detector_forecast"
         rows = state.get("rows") or []
         if self.omni is not None and self._is_series(rows):
             return "detector_omni"
@@ -213,6 +217,22 @@ class AgentNodes:
             return self._assemble(rows, cols, scores, thr, "baseline", note=note)
         scores, thr = omni
         return self._assemble(rows, cols, scores, thr, "omnianomaly")
+
+    def detector_forecast(self, state: dict) -> dict:
+        """Chronos-Bolt forecaster arm — flags points whose actual value falls far
+        outside the model's forecast band. Falls back to the baseline (with a note)
+        when the forecaster isn't enabled or the data isn't a per-machine series."""
+        rows = state.get("rows") or []
+        cols, X = _prep(rows)
+        if cols is None:
+            return _empty_detection(rows)
+        fc = self._forecast_detect(rows)
+        if fc is None:
+            scores, thr = self._baseline_scores(X)
+            note = "Chronos forecaster unavailable / needs a per-machine series; used baseline"
+            return self._assemble(rows, cols, scores, thr, "baseline", note=note)
+        scores, thr = fc
+        return self._assemble(rows, cols, scores, thr, "chronos")
 
     def _baseline_scores(self, X: np.ndarray) -> tuple[np.ndarray, float]:
         det = self.detector_factory().fit(X)
@@ -253,41 +273,63 @@ class AgentNodes:
             counts[r["machine_id"]] = counts.get(r["machine_id"], 0) + 1
         return any(c >= window for c in counts.values())
 
-    def _omni_detect(self, rows: list[dict]):
-        """Score each machine's series with the pretrained model. Returns
-        ``(scores aligned to rows, threshold)`` or ``None`` when it cannot apply (no
-        model, missing features, or no machine with ``>= window`` bins)."""
-        if self.omni is None:
+    def _series_scores(self, model, rows: list[dict]):
+        """Score each machine's per-bin series with ``model.score`` (a model exposing
+        ``window`` + ``score(seq)``). Returns ``scores aligned to rows`` or ``None`` when
+        it can't apply (no model, missing trained features, or no machine with
+        ``>= window`` bins). Shared by the OmniAnomaly and Chronos arms."""
+        if model is None:
             return None
         feats = self.omni_features
         r0 = rows[0]
         if "machine_id" not in r0 or any(f not in r0 for f in feats):
             return None
-        window = self.omni.window
         groups: dict = {}
         for i, r in enumerate(rows):
             groups.setdefault(r["machine_id"], []).append(i)
         scores = np.zeros(len(rows), dtype=float)
         scored = 0
         for idxs in groups.values():
-            if "bin" in r0:  # ensure chronological order within the machine
+            if "bin" in r0:  # chronological order within the machine
                 idxs = sorted(idxs, key=lambda i: rows[i].get("bin") or 0)
-            if len(idxs) < window:
+            if len(idxs) < model.window:
                 continue
             seq = np.array(
                 [[float(rows[i].get(f) or 0.0) for f in feats] for i in idxs], dtype=float
             )
-            s = np.nan_to_num(self.omni.score(seq), posinf=0.0, neginf=0.0)
+            s = np.nan_to_num(model.score(seq), posinf=0.0, neginf=0.0)
             for k, i in enumerate(idxs):
                 scores[i] = float(s[k])
             scored += len(idxs)
-        if scored == 0:  # no machine had a long enough series
+        return scores if scored else None
+
+    def _omni_detect(self, rows: list[dict]):
+        """OmniAnomaly per-machine scoring → ``(scores, threshold)`` or ``None``."""
+        scores = self._series_scores(self.omni, rows)
+        if scores is None:
             return None
         thr = (
             float(self.omni.threshold_)
             if self.omni.threshold_ is not None
             else float(scores.max())
         )
+        return scores, thr
+
+    def _forecast_detect(self, rows: list[dict]):
+        """Chronos forecast-residual scoring → ``(scores, threshold)`` or ``None``.
+        Threshold is POT over the combined residuals — Chronos is zero-shot, so there's
+        no trained threshold to reuse."""
+        scores = self._series_scores(self.forecaster, rows)
+        if scores is None:
+            return None
+        nz = scores[scores > 0]
+        if len(nz) >= 20:
+            try:
+                thr = float(pot_threshold(nz, 1e-3))
+            except Exception:  # noqa: BLE001 — POT can be unstable on short tails
+                thr = float(np.quantile(nz, 0.98))
+        else:
+            thr = float(nz.max()) if len(nz) else float(scores.max())
         return scores, thr
 
     def root_cause(self, state: dict) -> dict:

@@ -20,7 +20,7 @@ export interface Detection {
   grade?: Record<string, number> | null;
 }
 
-export type DetectorMode = "auto" | "baseline" | "omnianomaly";
+export type DetectorMode = "auto" | "baseline" | "omnianomaly" | "forecast";
 
 export interface RootCause {
   ranked_features?: [string, number][];

@@ -78,6 +78,7 @@ jobs:
             BIGQUERY_DATASET=alibaba_cluster
             API_KEY=${{ secrets.BACKEND_API_KEY }}
             OMNI_CHECKPOINT_URI=gs://${{ vars.GCP_PROJECT }}-models/omni/omni_global.pt
+            CHRONOS_MODEL=amazon/chronos-bolt-tiny
             FRONTEND_ORIGIN=*
 
   # ------------------------------------------------------------ frontend

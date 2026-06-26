@@ -130,3 +130,39 @@ def test_mode_omni_falls_back_with_note_on_snapshot():
 def test_route_baseline_when_no_model():
     n = _nodes(None)
     assert n.route_detector({"rows": _series_rows(2, 5), "detector": "auto"}) == "detector_baseline"
+
+
+# -------------------------------------------------------- Chronos forecast arm
+
+
+class FakeForecaster:
+    """Duck-typed stand-in for a loaded ChronosForecaster (no model download in tests)."""
+
+    window = 3
+
+    def score(self, seq):
+        s = np.full(len(seq), 0.1)
+        s[-1] = 5.0  # large forecast residual on the last bin
+        return s
+
+
+def _fc_nodes():
+    return AgentNodes(llm=FakeLLM(["x"]), runner=FakeRunner([]), forecaster=FakeForecaster())
+
+
+def test_route_forecast_mode_to_forecast_arm():
+    n = _fc_nodes()
+    assert n.route_detector({"rows": _series_rows(2, 5), "detector": "forecast"}) == "detector_forecast"
+
+
+def test_detector_forecast_scores_series():
+    out = _fc_nodes().detector_forecast({"rows": _series_rows(2, 5)})
+    assert out["detection"]["detector"] == "chronos"
+    assert out["detection"]["n"] == 10
+
+
+def test_forecast_falls_back_to_baseline_without_model():
+    n = AgentNodes(llm=FakeLLM(["x"]), runner=FakeRunner([]), forecaster=None)
+    out = n.detector_forecast({"rows": _series_rows(2, 5)})
+    assert out["detection"]["detector"] == "baseline"
+    assert "note" in out["detection"]

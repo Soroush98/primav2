@@ -36,6 +36,23 @@ def load_omni(uri: str, device: str = "cpu"):
         return None
 
 
+def load_chronos(model_name: str, device: str = "cpu"):
+    """Load a Chronos-Bolt forecaster, or ``None``. Like ``load_omni``, never raises:
+    if the id is empty or ``chronos-forecasting`` / the model isn't available, the
+    forecast arm degrades to the baseline."""
+    if not model_name:
+        return None
+    try:
+        from app.detectors.chronos import ChronosForecaster
+
+        det = ChronosForecaster(model_name, device=device)
+        log.info("Chronos forecaster loaded (%s)", model_name)
+        return det
+    except Exception as exc:  # noqa: BLE001 — degrade to baseline, never crash serving
+        log.warning("Chronos forecaster not loaded (%s); forecast mode uses baseline", exc)
+        return None
+
+
 def _ensure_local(uri: str) -> str:
     """Return a local path for ``uri`` — downloading from GCS to a temp file if needed."""
     if not uri.startswith("gs://"):

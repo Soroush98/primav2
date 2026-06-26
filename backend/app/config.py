@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # disabled (the agent serves the MAD/EVT baseline only). Loaded once at startup.
     omni_checkpoint_uri: str = ""
 
+    # Chronos-Bolt forecaster arm — HF model id (e.g. "amazon/chronos-bolt-tiny").
+    # Empty = disabled; the "forecast" mode then falls back to the baseline.
+    chronos_model: str = ""
+
     # CORS
     frontend_origin: str = "http://localhost:3000"
 

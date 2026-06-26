@@ -17,33 +17,39 @@ as the reasoning engine.
 ## What it does (request flow)
 
 ```
- Browser (Next.js 16)                          Google Cloud
- ───────────────────                          ─────────────
-   AnalyzeForm  ──POST /api/analyze──▶  FastAPI  ──┐
-   app/ui/analyze-form.tsx                         │  LangGraph fleet (app/agent/graph.py)
-                                                   ▼
-        ┌───────────────┬───────────────┬───────────────┬───────────────┬─────────────┐
-        │ orchestrator  │  sql_analyst  │   detector    │  root_cause   │   narrator  │
-        │ parse intent  │ text→SQL,     │ MAD/EVT score │ rank metrics  │ write the   │
-        │   (Gemini)    │ read-only run │ + grade       │ by deviation  │  briefing   │
-        │               │  (Gemini+BQ)  │  (NumPy)      │  (NumPy)      │  (Gemini)   │
-        └───────┬───────┴───────┬───────┴───────────────┴───────────────┴──────┬──────┘
-                │               │                                               │
-          Vertex AI       BigQuery  ◀── read-only SELECT/WITH (guarded)         ▼
-          (Gemini)        alibaba_cluster.*                          AnalyzeResponse → UI
+ Browser (Next.js 16)                       Google Cloud
+ ───────────────────                        ─────────────
+   ask + detector selector ─POST /api/analyze─▶ FastAPI · LangGraph fleet (app/agent/graph.py)
+   app/page.tsx
+
+   orchestrator ─▶ sql_analyst ─▶ ⟨route_detector⟩ ─┬─▶ detector_baseline   (MAD/EVT · NumPy)
+   parse intent    text→SQL +      conditional edge  ├─▶ detector_omni       (OmniAnomaly · torch)
+     (Gemini)      read-only run    by mode + shape   └─▶ detector_forecast   (Chronos-Bolt · torch)
+                   (Gemini + BQ)                                  │
+                                  all arms ─▶ root_cause ─▶ narrator ─▶ AnalyzeResponse → UI
+                                              rank (NumPy)    briefing (Gemini)
 ```
 
-Each node is a plain method on [`AgentNodes`](backend/app/agent/nodes.py), wired into
-a linear graph in [`graph.py`](backend/app/agent/graph.py) and compiled once in
-[`runtime.py`](backend/app/agent/runtime.py):
+Each node is a method on [`AgentNodes`](backend/app/agent/nodes.py). The graph
+([`graph.py`](backend/app/agent/graph.py)) is linear except for the detector step,
+which is a **conditional route**: after `sql_analyst`, `route_detector` picks an arm
+(by the request's detector mode + the data shape) and all arms converge into
+`root_cause`. The UI exposes the choice as a selector; `auto` sends per-machine time
+series to OmniAnomaly and latest-bin snapshots to the baseline.
 
 | Node | Role | Uses |
 |---|---|---|
 | `orchestrator` | parse the question into structured intent (focus + entities) | Gemini |
-| `sql_analyst` | author **one** read-only SQL, validate it, run it on BigQuery | Gemini + BigQuery |
-| `detector` | score each row with the MAD/EVT baseline; grade (raw + PA F1) if labels exist | NumPy/SciPy |
+| `sql_analyst` | author **one** read-only SQL (snapshot vs per-machine series, by mode), run it | Gemini + BigQuery |
+| `route_detector` | **conditional edge** — choose the detector arm by mode (+ data shape for `auto`) | — |
+| `detector_baseline` | MAD/EVT robust z-score + POT; order-invariant — fleet snapshots | NumPy/SciPy |
+| `detector_omni` | OmniAnomaly VAE — windows each machine's series for temporal anomalies | PyTorch |
+| `detector_forecast` | Chronos-Bolt zero-shot forecast residuals on a machine's series | PyTorch / transformers |
 | `root_cause` | rank the metrics that drove the top anomalies (per-feature MAD deviation) | NumPy |
 | `narrator` | turn the evidence into a human briefing | Gemini |
+
+A 3rd-arm-style extension (a new detector or an ensemble) drops in as one more
+`detector_*` node + a `route_detector` branch + a graph entry — nothing else changes.
 
 **Safety:** the only SQL that reaches BigQuery is gated by
 [`assert_read_only()`](backend/app/agent/bigquery_tool.py) (SELECT/WITH only — write
@@ -63,8 +69,12 @@ and DDL keywords are rejected). CORS is locked to the frontend origin in
 
 **Cost-conscious by design:** the only paid calls in the request path are managed
 Gemini API calls and BigQuery queries. There are **no persistent Vertex AI model
-endpoints** — the OmniAnomaly arm is trained **offline, run-to-completion** (locally
-on Apple MPS / CPU) and batch-scored; nothing GPU-backed sits idle.
+endpoints** — OmniAnomaly is trained **offline, run-to-completion** (a Vertex custom
+job on a Spot GPU; see [TRAINING.md](TRAINING.md)) and the resulting checkpoint is
+loaded once at container startup to **score on demand**; Chronos-Bolt is **zero-shot**
+(no training). The detector torch/transformers arms make the image larger and cold
+starts slower, so they're opt-in via env (`OMNI_CHECKPOINT_URI`, `CHRONOS_MODEL`);
+unset ⇒ the agent serves the baseline only.
 
 ### BigQuery contents (`primav2.alibaba_cluster`)
 
@@ -81,16 +91,22 @@ The exact table/column descriptions the agent sees live in `SCHEMA_HINT` in
 
 ## Detection & evaluation
 
-Two detectors are compared on the same data, graded the same way:
+Three detector arms, graded the same way, each the right tool for a different regime:
 
 - **MAD/EVT baseline** ([`baseline.py`](backend/app/detectors/baseline.py)) — cheap,
   deterministic robust z-score + Peaks-Over-Threshold (SPOT, Siffer et al. 2017).
-  **This is the shipped detector** (wired into the agent's `detector` node).
+  Order-invariant; the default for fleet snapshots and the always-available fallback.
 - **OmniAnomaly** ([`detectors/omnianomaly/`](backend/app/detectors/omnianomaly/)) — a
   PyTorch port of the stochastic-RNN VAE (Su et al., KDD 2019;
-  [NetManAIOps/OmniAnomaly](https://github.com/NetManAIOps/OmniAnomaly)). Kept as the
-  graded deep-learning comparison arm + per-dimension root-cause interpreter.
-  Load-bearing mechanisms and documented deviations: [its README](backend/app/detectors/omnianomaly/README.md).
+  [NetManAIOps/OmniAnomaly](https://github.com/NetManAIOps/OmniAnomaly)). Trained
+  globally (see [TRAINING.md](TRAINING.md)) and **served on demand** for per-machine
+  temporal anomalies. Mechanisms + deviations: [its README](backend/app/detectors/omnianomaly/README.md).
+- **Chronos-Bolt** ([`chronos.py`](backend/app/detectors/chronos.py)) — Amazon's
+  zero-shot time-series foundation model used as a **forecast-residual** detector:
+  flag points whose actual value falls far outside the model's forecast band.
+
+All three implement the same `score`/`threshold_` shape and are interchangeable behind
+`route_detector`; the user picks one (or `auto`) from the UI selector.
 
 **Metric rigor** ([`metrics.py`](backend/app/eval/metrics.py)): every comparison
 reports **raw best-F1 and AUC-PR (strict, trusted)** alongside **point-adjusted

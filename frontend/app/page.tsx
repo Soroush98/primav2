@@ -128,6 +128,7 @@ export default function Home() {
               <option value="auto">Auto</option>
               <option value="baseline">Baseline (snapshot)</option>
               <option value="omnianomaly">OmniAnomaly (temporal)</option>
+              <option value="forecast">Chronos (forecast)</option>
             </select>
             <button onClick={() => run(question)} disabled={loading || !question.trim()}>
               {loading ? <span className="spinner" /> : "Analyze"}

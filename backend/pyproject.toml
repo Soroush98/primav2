@@ -24,10 +24,11 @@ dev = [
     "ruff>=0.8",
 ]
 
-# Heavy ML deps for the OmniAnomaly arm — kept out of the API/serving image.
+# Heavy ML deps for the OmniAnomaly + Chronos arms — kept out of the lean dev install.
 # Install with: uv sync --group ml
 ml = [
     "torch>=2.4",
+    "chronos-forecasting>=1.5",  # Chronos-Bolt forecaster arm (pulls transformers)
 ]
 
 [tool.ruff.lint]
