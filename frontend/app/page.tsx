@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { analyze, type AnalyzeResponse } from "./lib/api";
+import { analyze, type AnalyzeResponse, type DetectorMode } from "./lib/api";
 import Architecture from "./components/Architecture";
 import ScoreChart from "./components/ScoreChart";
 
@@ -28,12 +28,13 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [detector, setDetector] = useState<DetectorMode>("auto");
 
   async function run(q: string) {
     setLoading(true);
     setError(null);
     try {
-      setResult(await analyze(q));
+      setResult(await analyze(q, detector));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setResult(null);
@@ -67,7 +68,10 @@ export default function Home() {
         {
           agent: "detector",
           status: n > 0 ? "ok" : "warn",
-          detail: n > 0 ? `flagged ${flagged} of ${n.toLocaleString()}` : det?.note ?? "no rows",
+          detail:
+            n > 0
+              ? `${det?.detector ?? "baseline"} · flagged ${flagged} of ${n.toLocaleString()}`
+              : det?.note ?? "no rows",
         },
         {
           agent: "root_cause",
@@ -115,6 +119,16 @@ export default function Home() {
               onKeyDown={(e) => e.key === "Enter" && !loading && run(question)}
               placeholder="Ask about a machine's health, anomalies, or root cause…"
             />
+            <select
+              value={detector}
+              onChange={(e) => setDetector(e.target.value as DetectorMode)}
+              disabled={loading}
+              title="Detector arm — Auto picks by data shape; OmniAnomaly forces the temporal model"
+            >
+              <option value="auto">Auto</option>
+              <option value="baseline">Baseline (snapshot)</option>
+              <option value="omnianomaly">OmniAnomaly (temporal)</option>
+            </select>
             <button onClick={() => run(question)} disabled={loading || !question.trim()}>
               {loading ? <span className="spinner" /> : "Analyze"}
             </button>

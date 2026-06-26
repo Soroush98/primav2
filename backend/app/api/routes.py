@@ -21,7 +21,7 @@ async def analyze(
     req: AnalyzeRequest,
     agent=Depends(get_agent),
 ) -> AnalyzeResponse:
-    result = await agent.ainvoke({"question": req.question})
+    result = await agent.ainvoke({"question": req.question, "detector": req.detector})
     return AnalyzeResponse(
         question=req.question,
         briefing=result.get("briefing", ""),

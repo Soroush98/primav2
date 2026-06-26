@@ -8,6 +8,7 @@ class PrimaState(TypedDict, total=False):
     contributes only the keys it produces (LangGraph merges them in)."""
 
     question: str
+    detector: str         # requested mode: auto | baseline | omnianomaly
     focus: dict           # orchestrator: parsed intent / entities
     sql: str              # sql_analyst: the read-only query it authored
     rows: list[dict]      # sql_analyst: BigQuery result

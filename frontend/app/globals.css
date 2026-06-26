@@ -88,6 +88,11 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
   min-width: 120px; display: inline-flex; align-items: center; justify-content: center;
 }
 .ask button:disabled { opacity: 0.5; cursor: default; }
+.ask select {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text); padding: 0 12px; font-size: 14px; font-family: inherit; cursor: pointer; outline: none;
+}
+.ask select:focus { border-color: var(--accent); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
 .chip {

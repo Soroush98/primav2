@@ -1,8 +1,15 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+# auto = data shape decides; baseline = force MAD/EVT; omnianomaly = force the
+# deep-learning arm (steers the SQL to a per-machine time series it can window).
+DetectorMode = Literal["auto", "baseline", "omnianomaly"]
 
 
 class AnalyzeRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+    detector: DetectorMode = "auto"
 
 
 class AnalyzeResponse(BaseModel):

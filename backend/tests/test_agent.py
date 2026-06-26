@@ -100,17 +100,33 @@ def _nodes(omni):
     return AgentNodes(llm=FakeLLM(["x"]), runner=FakeRunner([]), omni=omni)
 
 
-def test_detector_uses_omni_on_per_machine_series():
-    out = _nodes(FakeOmni()).detector({"rows": _series_rows(2, 5)})  # 5 bins each >= window 3
+def test_route_and_score_omni_on_series():
+    n = _nodes(FakeOmni())
+    series = _series_rows(2, 5)  # 5 bins each >= window 3
+    assert n.route_detector({"rows": series, "detector": "auto"}) == "detector_omni"
+    out = n.detector_omni({"rows": series})
     assert out["detection"]["detector"] == "omnianomaly"
     assert out["detection"]["n"] == 10
 
 
-def test_detector_falls_back_to_baseline_on_snapshot():
-    out = _nodes(FakeOmni()).detector({"rows": _series_rows(8, 1)})  # 1 bin each < window
-    assert out["detection"]["detector"] == "baseline"
+def test_route_to_baseline_on_snapshot():
+    n = _nodes(FakeOmni())
+    snap = _series_rows(8, 1)  # 1 bin each < window
+    assert n.route_detector({"rows": snap, "detector": "auto"}) == "detector_baseline"
 
 
-def test_detector_baseline_when_no_model_loaded():
-    out = _nodes(None).detector({"rows": _series_rows(2, 5)})
+def test_mode_baseline_forces_baseline_even_on_series():
+    n = _nodes(FakeOmni())
+    series = _series_rows(2, 5)
+    assert n.route_detector({"rows": series, "detector": "baseline"}) == "detector_baseline"
+
+
+def test_mode_omni_falls_back_with_note_on_snapshot():
+    out = _nodes(FakeOmni()).detector_omni({"rows": _series_rows(8, 1)})  # snapshot
     assert out["detection"]["detector"] == "baseline"
+    assert "note" in out["detection"]  # explains the fallback
+
+
+def test_route_baseline_when_no_model():
+    n = _nodes(None)
+    assert n.route_detector({"rows": _series_rows(2, 5), "detector": "auto"}) == "detector_baseline"

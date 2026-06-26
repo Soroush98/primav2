@@ -98,6 +98,19 @@ def _numeric_matrix(rows: list[dict]) -> tuple[list[str], np.ndarray]:
     return cols, X
 
 
+def _prep(rows: list[dict]):
+    """Return ``(cols, X)`` to score, or ``(None, None)`` if there's nothing numeric."""
+    if not rows:
+        return None, None
+    cols, X = _numeric_matrix(rows)
+    return (cols, X) if cols else (None, None)
+
+
+def _empty_detection(rows: list[dict]) -> dict:
+    note = "no rows returned" if not rows else "no numeric features"
+    return {"detection": {"n": len(rows), "flagged": 0, "note": note}}
+
+
 class AgentNodes:
     def __init__(
         self,
@@ -125,16 +138,29 @@ class AgentNodes:
         return {"focus": _safe_json(text)}
 
     async def sql_analyst(self, state: dict) -> dict:
+        # The requested detector mode steers the QUERY SHAPE: OmniAnomaly needs a
+        # per-machine time series; the baseline works on a latest-bin snapshot.
+        if state.get("detector") == "omnianomaly":
+            guidance = (
+                "TEMPORAL mode (for OmniAnomaly): return ONE machine's full per-bin series from "
+                "`usage_5min` (machine_id, bin, cpu, mem, net_in, net_out, disk_io) ORDERED BY bin "
+                "— at least ~200 consecutive bins. NEVER hardcode a machine_id; pick one from the "
+                "data (e.g. the machine_id with the most rows)."
+            )
+        else:
+            guidance = (
+                "Prefer `usage_5min`; default to the LATEST bin only (one row per machine, ~4k "
+                "rows) unless the question explicitly asks for a time range — then bound it to a "
+                "small recent window. If you filter to one machine, SELECT it from the data — "
+                "never hardcode an id."
+            )
         sql = _strip_code_fence(
             await self.llm.generate(
                 f"Schema:\n{self.schema}\n\n"
                 f"Question: {state['question']}\nIntent: {state.get('focus')}\n\n"
                 "Write ONE read-only BigQuery SQL (SELECT/WITH only) returning per-machine/per-bin "
-                "numeric metrics plus machine_id (and bin for time order). "
-                "Scope tightly: prefer `usage_5min`; default to the LATEST bin only "
-                "(one row per machine, ~4k rows) unless the question explicitly asks for a time "
-                "range — then bound it to a small recent window. ALWAYS end with an explicit "
-                "`LIMIT 50000` as a backstop. Reply with SQL only.",
+                f"numeric metrics plus machine_id (and bin for time order). {guidance} "
+                "ALWAYS end with an explicit `LIMIT 50000` as a backstop. Reply with SQL only.",
                 system="You author safe, read-only BigQuery SQL. SELECT/WITH only.",
             )
         )
@@ -145,24 +171,57 @@ class AgentNodes:
             return {"sql": sql, "rows": [], "error": f"sql_analyst: {exc}"}
         return {"sql": sql, "rows": rows}
 
-    def detector(self, state: dict) -> dict:
-        rows = state.get("rows") or []
-        if not rows:
-            return {"detection": {"n": 0, "flagged": 0, "note": "no rows returned"}}
-        cols, X = _numeric_matrix(rows)
-        if not cols:
-            return {"detection": {"n": len(rows), "flagged": 0, "note": "no numeric features"}}
+    # ---- detector arms, picked by `route_detector` (a LangGraph conditional edge) ----
+    # Two arms today (baseline, omnianomaly); a 3rd (e.g. a Chronos-Bolt forecaster)
+    # drops in as another `detector_*` node + a `route_detector` branch + a graph entry.
 
-        # OmniAnomaly serves when the data is a per-machine time series it can window;
-        # otherwise (e.g. a latest-bin snapshot) fall back to the MAD/EVT baseline.
+    def route_detector(self, state: dict) -> str:
+        """Conditional-edge router: choose the detector arm for this request.
+
+        ``baseline``/``omnianomaly`` force an arm; ``auto`` (default) sends per-machine
+        time series to OmniAnomaly and latest-bin snapshots to the baseline."""
+        mode = state.get("detector", "auto")
+        if mode == "baseline":
+            return "detector_baseline"
+        if mode == "omnianomaly":
+            return "detector_omni"
+        rows = state.get("rows") or []
+        if self.omni is not None and self._is_series(rows):
+            return "detector_omni"
+        return "detector_baseline"
+
+    def detector_baseline(self, state: dict) -> dict:
+        """MAD/EVT baseline arm — order-invariant, scores any numeric matrix."""
+        rows = state.get("rows") or []
+        cols, X = _prep(rows)
+        if cols is None:
+            return _empty_detection(rows)
+        scores, thr = self._baseline_scores(X)
+        return self._assemble(rows, cols, scores, thr, "baseline")
+
+    def detector_omni(self, state: dict) -> dict:
+        """OmniAnomaly arm — windows each machine's series. Falls back to the baseline
+        (with a note) when no model is loaded or the data isn't a per-machine series."""
+        rows = state.get("rows") or []
+        cols, X = _prep(rows)
+        if cols is None:
+            return _empty_detection(rows)
         omni = self._omni_detect(rows)
-        if omni is not None:
-            scores, thr, used = omni
-        else:
-            det = self.detector_factory().fit(X)
-            scores = np.nan_to_num(det.score(X), posinf=0.0, neginf=0.0)
-            thr = float(det.threshold_) if det.threshold_ is not None else float(scores.max())
-            used = "baseline"
+        if omni is None:
+            scores, thr = self._baseline_scores(X)
+            note = "OmniAnomaly needs a per-machine time series; used baseline instead"
+            return self._assemble(rows, cols, scores, thr, "baseline", note=note)
+        scores, thr = omni
+        return self._assemble(rows, cols, scores, thr, "omnianomaly")
+
+    def _baseline_scores(self, X: np.ndarray) -> tuple[np.ndarray, float]:
+        det = self.detector_factory().fit(X)
+        scores = np.nan_to_num(det.score(X), posinf=0.0, neginf=0.0)
+        thr = float(det.threshold_) if det.threshold_ is not None else float(scores.max())
+        return scores, thr
+
+    def _assemble(self, rows, cols, scores, thr, used, note=None) -> dict:
+        """Shared post-processing for every arm: flag, grade, rank, downsample."""
         flag = scores >= thr
         grade = None
         if "label" in rows[0]:
@@ -170,28 +229,34 @@ class AgentNodes:
             if 0 < int(y.sum()) < len(y):
                 grade = evaluate(y, scores).as_dict()
         order = np.argsort(scores)[::-1]
-        return {
-            "feature_cols": cols,
-            "detection": {
-                "n": len(rows),
-                "flagged": int(flag.sum()),
-                "threshold": thr,
-                "score_max": float(scores.max()),
-                "detector": used,
-                "top_windows": [_window_label(rows[int(i)], int(i), float(scores[i])) for i in order[:8]],
-                "points": _downsample_points(scores, flag, cap=400),  # for the UI scatter
-                "grade": grade,
-            },
+        detection = {
+            "n": len(rows),
+            "flagged": int(flag.sum()),
+            "threshold": thr,
+            "score_max": float(scores.max()),
+            "detector": used,
+            "top_windows": [_window_label(rows[int(i)], int(i), float(scores[i])) for i in order[:8]],
+            "points": _downsample_points(scores, flag, cap=400),  # for the UI scatter
+            "grade": grade,
         }
+        if note:
+            detection["note"] = note
+        return {"feature_cols": cols, "detection": detection}
+
+    def _is_series(self, rows: list[dict]) -> bool:
+        """True if rows look like a per-machine time series the model can window."""
+        if not rows or "machine_id" not in rows[0]:
+            return False
+        window = getattr(self.omni, "window", 100)
+        counts: dict = {}
+        for r in rows:
+            counts[r["machine_id"]] = counts.get(r["machine_id"], 0) + 1
+        return any(c >= window for c in counts.values())
 
     def _omni_detect(self, rows: list[dict]):
-        """OmniAnomaly scoring for per-machine time series. Returns
-        ``(scores aligned to rows, threshold, "omnianomaly")`` when it applies, else
-        ``None`` to fall back to the baseline.
-
-        Applies only when a pretrained model is loaded, the rows carry the trained
-        features + ``machine_id``, and at least one machine has ``>= window`` bins (so
-        the model has a real temporal window to score — a snapshot has none)."""
+        """Score each machine's series with the pretrained model. Returns
+        ``(scores aligned to rows, threshold)`` or ``None`` when it cannot apply (no
+        model, missing features, or no machine with ``>= window`` bins)."""
         if self.omni is None:
             return None
         feats = self.omni_features
@@ -216,14 +281,14 @@ class AgentNodes:
             for k, i in enumerate(idxs):
                 scores[i] = float(s[k])
             scored += len(idxs)
-        if scored == 0:  # no machine had a long enough series — let the baseline handle it
+        if scored == 0:  # no machine had a long enough series
             return None
         thr = (
             float(self.omni.threshold_)
             if self.omni.threshold_ is not None
             else float(scores.max())
         )
-        return scores, thr, "omnianomaly"
+        return scores, thr
 
     def root_cause(self, state: dict) -> dict:
         rows = state.get("rows") or []
