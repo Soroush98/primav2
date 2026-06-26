@@ -7,10 +7,10 @@ Cloud. It ports [Soroush98/prima](https://github.com/Soroush98/prima) — a Lang
 reliability-analysis agent — from a local SMD-in-SQLite setup to a BigQuery +
 Vertex AI stack.
 
-Ask a natural-language question about cluster health; a five-node agent fleet turns
-it into a read-only BigQuery query, runs anomaly detection over the result, ranks the
-contributing metrics, and writes a briefing — with **Gemini 2.5 Flash on Vertex AI**
-as the reasoning engine.
+Ask a natural-language question about cluster health; a LangGraph agent fleet turns
+it into a read-only BigQuery query, **routes it to one of three anomaly detectors**
+(MAD/EVT baseline · OmniAnomaly · Chronos-Bolt), ranks the contributing metrics, and
+writes a briefing — with **Gemini 2.5 Flash on Vertex AI** as the reasoning engine.
 
 ---
 
@@ -64,7 +64,7 @@ and DDL keywords are rejected). CORS is locked to the frontend origin in
 |---|---|---|---|
 | Data warehouse | **BigQuery** (`primav2.alibaba_cluster`) | stores raw + resampled telemetry; serves the `sql_analyst`'s queries | ✅ yes |
 | Reasoning engine | **Vertex AI — Gemini 2.5 Flash** (via the [`google-genai`](backend/app/llm/gemini.py) SDK, `vertexai=True`) | intent parsing, text→SQL, narration | ✅ yes (3 nodes) |
-| API / compute | **Cloud Run** (stateless container) — *target deployment* | hosts the FastAPI app; runs locally in dev | n/a |
+| API / compute | **Cloud Run** (stateless container) — **live** (CI/CD on push to main) | hosts the FastAPI app + serves the detector arms | ✅ |
 | Auth | **Application Default Credentials** (`gcloud auth application-default login`) | no API keys in the Gemini path | ✅ |
 
 **Cost-conscious by design:** the only paid calls in the request path are managed
@@ -200,11 +200,11 @@ cd backend && gcloud run deploy prima-backend --source . --region us-central1 ..
 |---|---|
 | Data | BigQuery (cluster by `machine_id`) |
 | Model | Gemini 2.5 Flash on Vertex AI — [`google-genai`](https://github.com/googleapis/python-genai) SDK |
-| Agent | [LangGraph](https://github.com/langchain-ai/langgraph) (5-node linear fleet) |
-| Detectors | MAD/EVT (NumPy/SciPy) · OmniAnomaly (PyTorch, `ml` dep group) |
+| Agent | [LangGraph](https://github.com/langchain-ai/langgraph) (fleet + conditional detector route) |
+| Detectors | MAD/EVT (NumPy/SciPy) · OmniAnomaly (PyTorch) · Chronos-Bolt (transformers) — routed |
 | Backend | Python 3.13 · [FastAPI](https://fastapi.tiangolo.com/) 0.138 · `uv` |
 | Frontend | [Next.js 16](https://nextjs.org/) (App Router, Turbopack, React 19.2) |
-| Compute | Cloud Run (target; no persistent Vertex endpoints) |
+| Compute | Cloud Run — live (scale-to-zero; no persistent Vertex endpoints) |
 
 ## References
 
