@@ -14,6 +14,12 @@ ENV UV_COMPILE_BYTECODE=1 \
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
+# OmniAnomaly serving arm: GCS (checkpoint download) + CPU-only torch (no CUDA, so
+# ~200 MB not ~2 GB). Kept out of pyproject so local/dev installs stay lean; the app
+# imports both lazily and degrades to the baseline if they are absent.
+RUN uv pip install --no-cache google-cloud-storage \
+ && uv pip install --no-cache --index-url https://download.pytorch.org/whl/cpu torch
+
 # App source.
 COPY app ./app
 

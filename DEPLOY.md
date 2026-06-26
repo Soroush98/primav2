@@ -40,7 +40,7 @@ cd backend
 gcloud run deploy prima-backend \
   --source . --region $REGION --service-account $SA \
   --allow-unauthenticated --memory=1Gi \
-  --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=gemini-2.5-flash,BIGQUERY_DATASET=alibaba_cluster,FRONTEND_ORIGIN=*"
+  --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=gemini-2.5-flash,BIGQUERY_DATASET=alibaba_cluster,OMNI_CHECKPOINT_URI=gs://$PROJECT-models/omni/omni_global.pt,FRONTEND_ORIGIN=*"
 
 BACKEND_URL=$(gcloud run services describe prima-backend --region $REGION --format='value(status.url)')
 echo "Backend: $BACKEND_URL"      # e.g. https://prima-backend-xxxx.us-central1.run.app

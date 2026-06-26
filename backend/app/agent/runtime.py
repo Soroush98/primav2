@@ -10,6 +10,7 @@ def get_agent():
     """Build the compiled agent graph once, wired with real dependencies
     (Gemini provider + BigQuery). Overridden in tests via dependency_overrides."""
     from app.agent.bigquery_tool import BigQueryRunner
+    from app.detectors.model_store import load_omni
     from app.llm.gemini import _provider
 
     settings = get_settings()
@@ -21,5 +22,6 @@ def get_agent():
             max_rows=settings.bigquery_max_rows,
         ),
         schema_ddl=SCHEMA_HINT,
+        omni=load_omni(settings.omni_checkpoint_uri),  # None unless a checkpoint is set
     )
     return build_graph(nodes)

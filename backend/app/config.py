@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     bigquery_max_bytes_billed: int = 50_000_000_000  # ~50 GB cost cap per query
     bigquery_max_rows: int = 50_000  # cap rows materialized client-side (bounds memory)
 
+    # OmniAnomaly serving — gs:// or local path to the trained checkpoint. Empty =
+    # disabled (the agent serves the MAD/EVT baseline only). Loaded once at startup.
+    omni_checkpoint_uri: str = ""
+
     # CORS
     frontend_origin: str = "http://localhost:3000"
 

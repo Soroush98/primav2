@@ -77,6 +77,7 @@ jobs:
             GEMINI_MODEL=gemini-2.5-flash
             BIGQUERY_DATASET=alibaba_cluster
             API_KEY=${{ secrets.BACKEND_API_KEY }}
+            OMNI_CHECKPOINT_URI=gs://${{ vars.GCP_PROJECT }}-models/omni/omni_global.pt
             FRONTEND_ORIGIN=*
 
   # ------------------------------------------------------------ frontend

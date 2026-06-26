@@ -67,3 +67,50 @@ async def test_sql_guard_rejects_writes():
     for bad in ["DELETE FROM t", "DROP TABLE t", "UPDATE t SET x=1"]:
         with pytest.raises(ValueError):
             assert_read_only(bad)
+
+
+# ----------------------------------------------------------- OmniAnomaly routing
+
+
+class FakeOmni:
+    """Duck-typed stand-in for a loaded OmniAnomalyDetector (no torch in tests)."""
+
+    window = 3
+    threshold_ = 0.5
+
+    def score(self, seq):
+        s = np.full(len(seq), 0.1)
+        s[-1] = 1.0  # flag the last bin of each machine's series
+        return s
+
+
+def _series_rows(n_machines=2, bins_per=5):
+    rng = np.random.default_rng(1)
+    feats = ["cpu", "mem", "net_in", "net_out", "disk_io"]
+    rows = []
+    for m in range(n_machines):
+        for b in range(bins_per):
+            rows.append(
+                {"machine_id": f"m_{m}", "bin": b, **{f: float(rng.normal(50, 5)) for f in feats}}
+            )
+    return rows
+
+
+def _nodes(omni):
+    return AgentNodes(llm=FakeLLM(["x"]), runner=FakeRunner([]), omni=omni)
+
+
+def test_detector_uses_omni_on_per_machine_series():
+    out = _nodes(FakeOmni()).detector({"rows": _series_rows(2, 5)})  # 5 bins each >= window 3
+    assert out["detection"]["detector"] == "omnianomaly"
+    assert out["detection"]["n"] == 10
+
+
+def test_detector_falls_back_to_baseline_on_snapshot():
+    out = _nodes(FakeOmni()).detector({"rows": _series_rows(8, 1)})  # 1 bin each < window
+    assert out["detection"]["detector"] == "baseline"
+
+
+def test_detector_baseline_when_no_model_loaded():
+    out = _nodes(None).detector({"rows": _series_rows(2, 5)})
+    assert out["detection"]["detector"] == "baseline"

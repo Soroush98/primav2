@@ -37,6 +37,10 @@ Table `machine_meta` — machine status snapshots: machine_id STRING, time_stamp
 
 _MAD_SCALE = 0.6744897501960817
 
+# Feature order the OmniAnomaly checkpoint was trained on — must match
+# app.eval.alibaba.FEATURES (the checkpoint stores mean/std, not column names).
+OMNI_FEATURES = ["cpu", "mem", "net_in", "net_out", "disk_io"]
+
 
 def _safe_json(text: str) -> dict:
     try:
@@ -101,11 +105,15 @@ class AgentNodes:
         runner: QueryRunner,
         schema_ddl: str = SCHEMA_HINT,
         detector_factory=BaselineDetector,
+        omni=None,                       # pretrained OmniAnomaly detector, or None
+        omni_features=OMNI_FEATURES,
     ) -> None:
         self.llm = llm
         self.runner = runner
         self.schema = schema_ddl
         self.detector_factory = detector_factory
+        self.omni = omni
+        self.omni_features = list(omni_features)
 
     async def orchestrator(self, state: dict) -> dict:
         text = await self.llm.generate(
@@ -145,9 +153,16 @@ class AgentNodes:
         if not cols:
             return {"detection": {"n": len(rows), "flagged": 0, "note": "no numeric features"}}
 
-        det = self.detector_factory().fit(X)
-        scores = np.nan_to_num(det.score(X), posinf=0.0, neginf=0.0)
-        thr = float(det.threshold_) if det.threshold_ is not None else float(scores.max())
+        # OmniAnomaly serves when the data is a per-machine time series it can window;
+        # otherwise (e.g. a latest-bin snapshot) fall back to the MAD/EVT baseline.
+        omni = self._omni_detect(rows)
+        if omni is not None:
+            scores, thr, used = omni
+        else:
+            det = self.detector_factory().fit(X)
+            scores = np.nan_to_num(det.score(X), posinf=0.0, neginf=0.0)
+            thr = float(det.threshold_) if det.threshold_ is not None else float(scores.max())
+            used = "baseline"
         flag = scores >= thr
         grade = None
         if "label" in rows[0]:
@@ -162,11 +177,53 @@ class AgentNodes:
                 "flagged": int(flag.sum()),
                 "threshold": thr,
                 "score_max": float(scores.max()),
+                "detector": used,
                 "top_windows": [_window_label(rows[int(i)], int(i), float(scores[i])) for i in order[:8]],
                 "points": _downsample_points(scores, flag, cap=400),  # for the UI scatter
                 "grade": grade,
             },
         }
+
+    def _omni_detect(self, rows: list[dict]):
+        """OmniAnomaly scoring for per-machine time series. Returns
+        ``(scores aligned to rows, threshold, "omnianomaly")`` when it applies, else
+        ``None`` to fall back to the baseline.
+
+        Applies only when a pretrained model is loaded, the rows carry the trained
+        features + ``machine_id``, and at least one machine has ``>= window`` bins (so
+        the model has a real temporal window to score — a snapshot has none)."""
+        if self.omni is None:
+            return None
+        feats = self.omni_features
+        r0 = rows[0]
+        if "machine_id" not in r0 or any(f not in r0 for f in feats):
+            return None
+        window = self.omni.window
+        groups: dict = {}
+        for i, r in enumerate(rows):
+            groups.setdefault(r["machine_id"], []).append(i)
+        scores = np.zeros(len(rows), dtype=float)
+        scored = 0
+        for idxs in groups.values():
+            if "bin" in r0:  # ensure chronological order within the machine
+                idxs = sorted(idxs, key=lambda i: rows[i].get("bin") or 0)
+            if len(idxs) < window:
+                continue
+            seq = np.array(
+                [[float(rows[i].get(f) or 0.0) for f in feats] for i in idxs], dtype=float
+            )
+            s = np.nan_to_num(self.omni.score(seq), posinf=0.0, neginf=0.0)
+            for k, i in enumerate(idxs):
+                scores[i] = float(s[k])
+            scored += len(idxs)
+        if scored == 0:  # no machine had a long enough series — let the baseline handle it
+            return None
+        thr = (
+            float(self.omni.threshold_)
+            if self.omni.threshold_ is not None
+            else float(scores.max())
+        )
+        return scores, thr, "omnianomaly"
 
     def root_cause(self, state: dict) -> dict:
         rows = state.get("rows") or []
