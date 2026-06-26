@@ -1,7 +1,7 @@
 [project]
 name = "primav2-backend"
 version = "0.1.0"
-description = "primav2 — NetFlow anomaly-detection agent (FastAPI + Gemini on Vertex AI + BigQuery)"
+description = "primav2 — machine-reliability anomaly-detection agent (FastAPI + Gemini on Vertex AI + BigQuery)"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "fastapi[standard]>=0.138.0",

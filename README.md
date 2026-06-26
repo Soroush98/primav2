@@ -167,6 +167,17 @@ Tests: `uv run --directory backend pytest` (the OmniAnomaly/benchmark tests also
 
 ---
 
+## Deploy
+
+Both services run on **Cloud Run** (containerized; the backend image excludes
+`torch`). Step-by-step — service account, both deploys, CORS, and a Vercel
+alternative for the frontend — in **[DEPLOY.md](DEPLOY.md)**.
+
+```bash
+cd backend && gcloud run deploy prima-backend --source . --region us-central1 ...
+# then build the frontend image with the backend URL and deploy it. See DEPLOY.md.
+```
+
 ## Stack
 
 | Plane | Tech |
