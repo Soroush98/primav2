@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     api_key: str = ""
     rate_limit_per_min: int = 30  # per client IP, per instance; 0 disables
 
+    # Per-IP search quota, backed by Firestore — distributed + persistent across
+    # instances, unlike rate_limit_per_min (in-memory/best-effort). 0 disables (the
+    # default, so local dev and tests never touch Firestore). In prod set
+    # quota_per_window=10 to block an IP after 10 searches until the window elapses.
+    quota_per_window: int = 0
+    quota_window_sec: int = 86_400  # rolling window length; default 1 day
+
 
 @lru_cache
 def get_settings() -> Settings:

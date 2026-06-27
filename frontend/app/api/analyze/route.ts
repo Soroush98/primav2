@@ -12,10 +12,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "BACKEND_URL is not configured" }, { status: 500 });
   }
   const key = process.env.BACKEND_API_KEY;
+  // The backend sees only *our* egress IP on this server-to-server hop, so forward the
+  // real visitor IP (Cloud Run sets it on the browser→frontend request) for its per-IP
+  // quota. Take the first entry of x-forwarded-for, which is the original client.
+  const clientIp = (req.headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim();
   const body = await req.text();
   const res = await fetch(`${backend}/api/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(key ? { "X-API-Key": key } : {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(key ? { "X-API-Key": key } : {}),
+      ...(clientIp ? { "X-Real-Client-IP": clientIp } : {}),
+    },
     body,
   });
   const text = await res.text();

@@ -20,12 +20,19 @@ gcloud config set project $PROJECT
 
 # Enable the APIs.
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
-  artifactregistry.googleapis.com aiplatform.googleapis.com bigquery.googleapis.com
+  artifactregistry.googleapis.com aiplatform.googleapis.com bigquery.googleapis.com \
+  firestore.googleapis.com
 
-# Least-privilege runtime service account (SECURITY.md rec #1): Vertex + read-only BigQuery.
+# Firestore (Native mode) backs the per-IP search quota (app/api/quota.py). One DB per
+# project; co-locate with $REGION (its location is permanent). Skip if the project
+# already has a Firestore DB.
+gcloud firestore databases create --location=$REGION 2>/dev/null || true
+
+# Least-privilege runtime service account (SECURITY.md rec #1): Vertex + read-only
+# BigQuery + Firestore read/write (the quota counter).
 gcloud iam service-accounts create prima-run --display-name="primav2 Cloud Run"
 SA="prima-run@$PROJECT.iam.gserviceaccount.com"
-for ROLE in roles/aiplatform.user roles/bigquery.jobUser roles/bigquery.dataViewer; do
+for ROLE in roles/aiplatform.user roles/bigquery.jobUser roles/bigquery.dataViewer roles/datastore.user; do
   gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$SA" --role="$ROLE"
 done
 # Tighter alternative for dataViewer: grant it on the dataset only, not project-wide.
@@ -40,13 +47,28 @@ cd backend
 gcloud run deploy prima-backend \
   --source . --region $REGION --service-account $SA \
   --allow-unauthenticated --memory=1Gi --min-instances=1 \
-  --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=gemini-2.5-flash,BIGQUERY_DATASET=alibaba_cluster,OMNI_CHECKPOINT_URI=gs://$PROJECT-models/omni/omni_global.pt,CHRONOS_MODEL=amazon/chronos-bolt-tiny,FRONTEND_ORIGIN=*"
+  --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=gemini-2.5-flash,BIGQUERY_DATASET=alibaba_cluster,OMNI_CHECKPOINT_URI=gs://$PROJECT-models/omni/omni_global.pt,CHRONOS_MODEL=amazon/chronos-bolt-tiny,FRONTEND_ORIGIN=*,QUOTA_PER_WINDOW=10,QUOTA_WINDOW_SEC=86400"
 
 BACKEND_URL=$(gcloud run services describe prima-backend --region $REGION --format='value(status.url)')
 echo "Backend: $BACKEND_URL"      # e.g. https://prima-backend-xxxx.us-central1.run.app
 ```
 
 `FRONTEND_ORIGIN=*` is a temporary placeholder; we lock it in step 3.
+
+`QUOTA_PER_WINDOW=10` blocks an IP after 10 searches per `QUOTA_WINDOW_SEC` (1 day),
+returning HTTP 429 until the window resets — a distributed, persistent counter in
+Firestore that all instances share (set `QUOTA_PER_WINDOW=0` to disable). The window
+self-heals; to lift a ban early, delete the IP's doc:
+
+```bash
+gcloud firestore documents delete "ip_quota/<ip>"   # e.g. ip_quota/203.0.113.7
+```
+
+Every search is also logged as a JSON line; find who searched what in Logs Explorer:
+
+```
+resource.labels.service_name="prima-backend" AND jsonPayload.event="search"
+```
 
 > **Auth note:** `--allow-unauthenticated` makes the API public. It is currently
 > unauthenticated (SECURITY.md rec #3) — keep it private with `--no-allow-unauthenticated`
