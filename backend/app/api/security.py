@@ -38,7 +38,16 @@ def require_api_key(
 _HITS: dict[str, deque[float]] = defaultdict(deque)
 
 
-def _client_ip(request: Request) -> str:
+def client_ip(request: Request) -> str:
+    """Resolve the real visitor IP. The frontend proxy ([analyze/route.ts]) calls us
+    server-to-server, so `x-forwarded-for` here is the *frontend's* egress IP, not the
+    user's — the frontend therefore forwards the real client IP in `X-Real-Client-IP`.
+    Trusting that header is safe because the backend requires the server-only API key,
+    so only the frontend can reach it. Falls back to XFF / the socket peer for direct
+    calls (local dev)."""
+    real = request.headers.get("x-real-client-ip")
+    if real:
+        return real.strip()
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
         return fwd.split(",")[0].strip()
@@ -53,7 +62,7 @@ def rate_limit(
     if limit <= 0:
         return
     now = time.monotonic()
-    dq = _HITS[_client_ip(request)]
+    dq = _HITS[client_ip(request)]
     while dq and now - dq[0] > 60.0:
         dq.popleft()
     if len(dq) >= limit:

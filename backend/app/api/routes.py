@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.agent.runtime import get_agent
-from app.api.security import rate_limit, require_api_key
+from app.api.events import log_search
+from app.api.quota import quota_limit
+from app.api.security import client_ip, rate_limit, require_api_key
 from app.schemas import AnalyzeRequest, AnalyzeResponse
 
 router = APIRouter(prefix="/api", tags=["analysis"])
@@ -15,12 +17,16 @@ async def health() -> dict[str, str]:
 @router.post(
     "/analyze",
     response_model=AnalyzeResponse,
-    dependencies=[Depends(require_api_key), Depends(rate_limit)],
+    # Order = cheapest/most-protective first: auth, then in-memory burst guard, then
+    # the Firestore-backed per-IP quota.
+    dependencies=[Depends(require_api_key), Depends(rate_limit), Depends(quota_limit)],
 )
 async def analyze(
     req: AnalyzeRequest,
+    request: Request,
     agent=Depends(get_agent),
 ) -> AnalyzeResponse:
+    log_search(req.question, req.detector, client_ip(request))
     result = await agent.ainvoke({"question": req.question, "detector": req.detector})
     return AnalyzeResponse(
         question=req.question,

@@ -80,6 +80,8 @@ jobs:
             OMNI_CHECKPOINT_URI=gs://${{ vars.GCP_PROJECT }}-models/omni/omni_global.pt
             CHRONOS_MODEL=amazon/chronos-bolt-tiny
             FRONTEND_ORIGIN=*
+            QUOTA_PER_WINDOW=10
+            QUOTA_WINDOW_SEC=86400
 
   # ------------------------------------------------------------ frontend
   frontend:
