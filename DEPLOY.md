@@ -24,8 +24,9 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
   firestore.googleapis.com
 
 # Firestore (Native mode) backs the per-IP search quota (app/api/quota.py). One DB per
-# project; pick a location near $REGION. Skip if the project already has a Firestore DB.
-gcloud firestore databases create --location=nam5 2>/dev/null || true
+# project; co-locate with $REGION (its location is permanent). Skip if the project
+# already has a Firestore DB.
+gcloud firestore databases create --location=$REGION 2>/dev/null || true
 
 # Least-privilege runtime service account (SECURITY.md rec #1): Vertex + read-only
 # BigQuery + Firestore read/write (the quota counter).
