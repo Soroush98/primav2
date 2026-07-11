@@ -22,6 +22,7 @@ class OmniAnomalyDetector:
         z_dim: int = 3,
         hidden: int = 32,
         n_flows: int = 2,
+        connected_q: bool = True,
         lr: float = 1e-3,
         epochs: int = 10,
         batch: int = 64,
@@ -44,7 +45,8 @@ class OmniAnomalyDetector:
         self.z_dim = z_dim
         self.hidden = hidden
         self.n_flows = n_flows
-        self.model = OmniAnomaly(n_features, z_dim, hidden, n_flows).to(self.device)
+        self.connected_q = connected_q
+        self.model = OmniAnomaly(n_features, z_dim, hidden, n_flows, connected_q).to(self.device)
         self.mean_: np.ndarray | None = None
         self.std_: np.ndarray | None = None
         self.threshold_: float | None = None
@@ -167,6 +169,7 @@ class OmniAnomalyDetector:
                     "z_dim": self.z_dim,
                     "hidden": self.hidden,
                     "n_flows": self.n_flows,
+                    "connected_q": self.connected_q,
                     "mc_samples": self.mc_samples,
                     "batch": self.batch,
                     "q": self.q,
@@ -186,8 +189,11 @@ class OmniAnomalyDetector:
         c = ckpt["config"]
         det = cls(
             n_features=c["n_features"], window=c["window"], z_dim=c["z_dim"],
-            hidden=c["hidden"], n_flows=c["n_flows"], mc_samples=c["mc_samples"],
-            batch=c["batch"], q=c["q"], device=device,
+            hidden=c["hidden"], n_flows=c["n_flows"],
+            # Checkpoints saved before the connected-posterior existed lack the key
+            # and must reconstruct the old parallel-posterior architecture.
+            connected_q=c.get("connected_q", False),
+            mc_samples=c["mc_samples"], batch=c["batch"], q=c["q"], device=device,
         )
         det.model.load_state_dict(ckpt["model_state"])
         det.model.to(det.device)

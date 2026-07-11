@@ -41,7 +41,9 @@ PAPER_PA_F1 = 0.88  # OmniAnomaly SMD point-adjusted best-F1 (Su et al. 2019, Ta
 DEFAULT_MACHINES = ["machine-1-1", "machine-2-1", "machine-3-7"]
 
 # Paper-aligned where CPU/MPS allows; deviations documented in the report.
-OMNI_KW = dict(window=100, z_dim=3, hidden=100, n_flows=2,
+# n_flows=20 matches the paper (nf_layers); the connected posterior
+# q(z_t | x, z_{t-1}) is on by default since the port gained it.
+OMNI_KW = dict(window=100, z_dim=3, hidden=100, n_flows=20,
                epochs=15, batch=128, mc_samples=10, lr=1e-3, seed=0)
 
 

@@ -4,21 +4,29 @@ Faithful to https://github.com/NetManAIOps/OmniAnomaly. Implemented mechanisms:
 
   * GRU encoder (qnet) and GRU decoder (pnet) over a length-T window.
   * A stochastic latent z_t at every timestep (VAE).
-  * Planar normalizing-flow posterior q(z_t | x) — `PlanarFlow` stack.
+  * CONNECTED posterior q(z_t | x, z_{t-1}) (``connected_q=True``, the original's
+    `use_connected_z_q`): z is sampled sequentially and the previous latent sample
+    feeds the mu/sigma heads — the stochastic recurrence in the INFERENCE net
+    (upstream `RecurrentDistribution`).
+  * Planar normalizing-flow posterior — `PlanarFlow` stack (applied after
+    sampling, matching the upstream FlowDistribution wrapper).
   * A linear-Gaussian transition prior p(z_t | z_{t-1}) = N(A z_{t-1}, I) — the
-    "stochastic recurrence" that connects latents over time.
+    stochastic recurrence in the GENERATIVE net.
   * ELBO objective including the flow log-determinant (change of variables).
   * Anomaly score = negative reconstruction probability of the window's LAST
     point, Monte-Carlo averaged over posterior samples; per-dimension version
     drives root-cause interpretation.
 
 Documented deviations from the original (mle-practices §1):
-  * The prior is a first-order learnable linear-Gaussian transition, not
-    zhusuan's full LinearGaussianStateSpaceModel (Kalman). This preserves the
-    stochastic-recurrence mechanism; it simplifies the exact transition/covariance.
+  * The prior is a first-order learnable linear-Gaussian transition, not TFP's
+    LinearGaussianStateSpaceModel with fixed identity transition + Kalman
+    filtering. This preserves the stochastic-recurrence mechanism; it simplifies
+    the exact transition/covariance.
   * Gaussian observation likelihood; no missing-data MCMC imputation (we assume
     complete windows).
   * Single posterior sample during training; L samples only for scoring.
+  * ``connected_q=False`` reproduces the pre-recurrence architecture so
+    checkpoints trained before this flag existed still load and score.
 """
 
 from __future__ import annotations
@@ -65,13 +73,17 @@ class OmniAnomaly(nn.Module):
         z_dim: int = 3,
         hidden: int = 32,
         n_flows: int = 2,
+        connected_q: bool = True,
     ) -> None:
         super().__init__()
         self.z_dim = z_dim
-        # qnet (inference): GRU over inputs -> posterior params -> planar flows
+        self.connected_q = connected_q
+        # qnet (inference): GRU over inputs -> posterior params -> planar flows.
+        # With connected_q the mu/sigma heads also see z_{t-1} (sequential sampling).
         self.enc_gru = nn.GRU(n_features, hidden, batch_first=True)
-        self.z_mu = nn.Linear(hidden, z_dim)
-        self.z_logvar = nn.Linear(hidden, z_dim)
+        q_in = hidden + (z_dim if connected_q else 0)
+        self.z_mu = nn.Linear(q_in, z_dim)
+        self.z_logvar = nn.Linear(q_in, z_dim)
         self.flows = nn.ModuleList(PlanarFlow(z_dim) for _ in range(n_flows))
         # linear-Gaussian transition prior p(z_t | z_{t-1})
         self.transition = nn.Linear(z_dim, z_dim, bias=False)
@@ -83,9 +95,26 @@ class OmniAnomaly(nn.Module):
     def _forward_once(self, x: torch.Tensor):
         b, t, _ = x.shape
         h_enc, _ = self.enc_gru(x)
-        z_mu = self.z_mu(h_enc)
-        z_logvar = self.z_logvar(h_enc).clamp(-6.0, 6.0)
-        z0 = z_mu + torch.exp(0.5 * z_logvar) * torch.randn_like(z_mu)
+        if self.connected_q:
+            # Sequential posterior (upstream RecurrentDistribution): the previous
+            # PRE-FLOW sample z_{t-1} feeds the heads; z_0 = 0. Inherently a loop.
+            zs, mus, lvs = [], [], []
+            z_prev = torch.zeros(b, self.z_dim, device=x.device)
+            for ti in range(t):
+                inp = torch.cat([h_enc[:, ti], z_prev], dim=-1)
+                mu = self.z_mu(inp)
+                lv = self.z_logvar(inp).clamp(-6.0, 6.0)
+                z_prev = mu + torch.exp(0.5 * lv) * torch.randn_like(mu)
+                zs.append(z_prev)
+                mus.append(mu)
+                lvs.append(lv)
+            z0 = torch.stack(zs, dim=1)
+            z_mu = torch.stack(mus, dim=1)
+            z_logvar = torch.stack(lvs, dim=1)
+        else:
+            z_mu = self.z_mu(h_enc)
+            z_logvar = self.z_logvar(h_enc).clamp(-6.0, 6.0)
+            z0 = z_mu + torch.exp(0.5 * z_logvar) * torch.randn_like(z_mu)
 
         log_q0 = _gauss_logprob(z0, z_mu, z_logvar)                 # (B, T)
         z = z0
