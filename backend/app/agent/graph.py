@@ -10,9 +10,9 @@ def build_graph(nodes: AgentNodes):
     """Wire the Prima fleet and compile it.
 
     Linear except for the detector step, which is a CONDITIONAL ROUTE: after
-    sql_analyst, ``route_detector`` picks an arm (baseline vs OmniAnomaly, by mode +
-    data shape) and both arms converge back into root_cause. A 3rd arm (e.g. a
-    Chronos-Bolt forecaster) drops in here as one more node + route key."""
+    sql_analyst, ``route_detector`` picks an arm. The two anomaly arms (baseline,
+    OmniAnomaly) converge into root_cause; the Chronos forecast arm does no anomaly
+    detection, so it skips root_cause and goes straight to the narrator."""
     builder = StateGraph(PrimaState)
     builder.add_node("orchestrator", nodes.orchestrator)
     builder.add_node("sql_analyst", nodes.sql_analyst)
@@ -35,7 +35,13 @@ def build_graph(nodes: AgentNodes):
     )
     builder.add_edge("detector_baseline", "root_cause")
     builder.add_edge("detector_omni", "root_cause")
-    builder.add_edge("detector_forecast", "root_cause")
+    # Forecast-only runs skip root_cause (nothing was flagged); when the arm fell
+    # back to the baseline it produced anomaly scores, so root_cause still applies.
+    builder.add_conditional_edges(
+        "detector_forecast",
+        lambda s: "narrator" if "forecast" in (s.get("detection") or {}) else "root_cause",
+        {"narrator": "narrator", "root_cause": "root_cause"},
+    )
     builder.add_edge("root_cause", "narrator")
     builder.add_edge("narrator", END)
     return builder.compile()

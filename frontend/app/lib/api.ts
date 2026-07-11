@@ -10,11 +10,13 @@ export interface TopWindow {
 }
 export interface Detection {
   n: number;
-  flagged: number;
+  flagged?: number;    // anomaly arms only — absent on Chronos forecast runs
   threshold?: number;
   score_max?: number;
   detector?: string;   // which arm ran: "baseline" | "omnianomaly" | "chronos"
-  forecast?: ForecastDetail;  // Chronos arm only: actual vs forecast band
+  machine?: string;         // Chronos arm: the machine that was forecast
+  horizon_hours?: number;   // Chronos arm: forecast horizon (48 = 2 days)
+  forecast?: ForecastDetail;  // Chronos arm only: hourly history + 2-day forecast
   top_windows?: TopWindow[];
   points?: ScorePoint[];
   note?: string;
@@ -23,14 +25,17 @@ export interface Detection {
 
 export type DetectorMode = "auto" | "baseline" | "omnianomaly" | "forecast";
 
+export interface FeatureForecast {
+  history: number[]; // hourly means of the machine's recent series
+  median: number[];  // q50 forecast, one point per hour ahead
+  lo: number[];      // q10
+  hi: number[];      // q90
+}
+
 export interface ForecastDetail {
-  feature: string;
-  actual: number[];
-  median: number[];
-  lo: number[];
-  hi: number[];
-  score: number[];
-  threshold: number;
+  machine: string;
+  horizon_hours: number;
+  features: Record<string, FeatureForecast>;
 }
 
 export interface RootCause {

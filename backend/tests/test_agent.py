@@ -138,12 +138,19 @@ def test_route_baseline_when_no_model():
 class FakeForecaster:
     """Duck-typed stand-in for a loaded ChronosForecaster (no model download in tests)."""
 
-    window = 3
+    min_bins = 3
+    horizon_hours = 48
 
-    def score(self, seq):
-        s = np.full(len(seq), 0.1)
-        s[-1] = 5.0  # large forecast residual on the last bin
-        return s
+    def forecast(self, seq):
+        f = seq.shape[1]
+        flat = [[3.0] * self.horizon_hours] * f
+        return {
+            "history": [[1.0, 2.0]] * f,
+            "median": flat,
+            "lo": flat,
+            "hi": flat,
+            "horizon_hours": self.horizon_hours,
+        }
 
 
 def _fc_nodes():
@@ -155,10 +162,16 @@ def test_route_forecast_mode_to_forecast_arm():
     assert n.route_detector({"rows": _series_rows(2, 5), "detector": "forecast"}) == "detector_forecast"
 
 
-def test_detector_forecast_scores_series():
+def test_detector_forecast_returns_forecast_no_anomalies():
     out = _fc_nodes().detector_forecast({"rows": _series_rows(2, 5)})
-    assert out["detection"]["detector"] == "chronos"
-    assert out["detection"]["n"] == 10
+    det = out["detection"]
+    assert det["detector"] == "chronos"
+    assert det["n"] == 10
+    assert det["horizon_hours"] == 48
+    assert set(det["forecast"]["features"]) == {"cpu", "mem", "net_in", "net_out", "disk_io"}
+    assert len(det["forecast"]["features"]["cpu"]["median"]) == 48
+    # forecast-only: nothing is flagged or thresholded
+    assert "flagged" not in det and "threshold" not in det and "top_windows" not in det
 
 
 def test_forecast_falls_back_to_baseline_without_model():
@@ -166,3 +179,34 @@ def test_forecast_falls_back_to_baseline_without_model():
     out = n.detector_forecast({"rows": _series_rows(2, 5)})
     assert out["detection"]["detector"] == "baseline"
     assert "note" in out["detection"]
+
+
+def test_forecast_falls_back_to_baseline_on_short_series():
+    out = _fc_nodes().detector_forecast({"rows": _series_rows(2, 2)})  # < min_bins
+    assert out["detection"]["detector"] == "baseline"
+    assert "note" in out["detection"]
+
+
+async def test_forecast_graph_skips_root_cause():
+    llm = FakeLLM(['{"focus": "outlook"}', "SELECT * FROM `t`", "2-day outlook."])
+    nodes = AgentNodes(llm=llm, runner=FakeRunner(_series_rows(1, 5)), forecaster=FakeForecaster())
+    graph = build_graph(nodes)
+
+    result = await graph.ainvoke({"question": "forecast machine health", "detector": "forecast"})
+
+    assert result["briefing"] == "2-day outlook."
+    assert result["detection"]["forecast"]["horizon_hours"] == 48
+    assert not result.get("root_cause")  # forecast-only runs skip the root-cause node
+
+
+async def test_forecast_graph_fallback_still_runs_root_cause():
+    """When the forecast arm falls back to the baseline it produced anomaly scores,
+    so the conditional edge must still route through root_cause."""
+    llm = FakeLLM(['{"focus": "outlook"}', "SELECT * FROM `t`", "Briefing."])
+    nodes = AgentNodes(llm=llm, runner=FakeRunner(_series_rows(2, 5)), forecaster=None)
+    graph = build_graph(nodes)
+
+    result = await graph.ainvoke({"question": "forecast machine health", "detector": "forecast"})
+
+    assert result["detection"]["detector"] == "baseline"
+    assert result["root_cause"]["ranked_features"]

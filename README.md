@@ -8,9 +8,10 @@ reliability-analysis agent — from a local SMD-in-SQLite setup to a BigQuery +
 Vertex AI stack.
 
 Ask a natural-language question about cluster health; a LangGraph agent fleet turns
-it into a read-only BigQuery query, **routes it to one of three anomaly detectors**
-(MAD/EVT baseline · OmniAnomaly · Chronos-Bolt), ranks the contributing metrics, and
-writes a briefing — with **Gemini 2.5 Flash on Vertex AI** as the reasoning engine.
+it into a read-only BigQuery query and **routes it to one of three model arms**: two
+anomaly detectors (MAD/EVT baseline · OmniAnomaly), which also rank the contributing
+metrics, or a **2-day Chronos-Bolt forecast**. A narrator then writes a briefing —
+with **Gemini 2.5 Flash on Vertex AI** as the reasoning engine.
 
 ---
 
@@ -26,15 +27,17 @@ writes a briefing — with **Gemini 2.5 Flash on Vertex AI** as the reasoning en
    parse intent    text→SQL +      conditional edge  ├─▶ detector_omni       (OmniAnomaly · torch)
      (Gemini)      read-only run    by mode + shape   └─▶ detector_forecast   (Chronos-Bolt · torch)
                    (Gemini + BQ)                                  │
-                                  all arms ─▶ root_cause ─▶ narrator ─▶ AnalyzeResponse → UI
-                                              rank (NumPy)    briefing (Gemini)
+                anomaly arms ─▶ root_cause ─▶ narrator ─▶ AnalyzeResponse → UI
+                                rank (NumPy)    briefing (Gemini)
+                forecast arm ──────────────▶ narrator   (2-day forecast — no anomaly step)
 ```
 
 Each node is a method on [`AgentNodes`](backend/app/agent/nodes.py). The graph
 ([`graph.py`](backend/app/agent/graph.py)) is linear except for the detector step,
 which is a **conditional route**: after `sql_analyst`, `route_detector` picks an arm
-(by the request's detector mode + the data shape) and all arms converge into
-`root_cause`. The UI exposes the choice as a selector; `auto` sends per-machine time
+(by the request's detector mode + the data shape). The anomaly arms converge into
+`root_cause`; the forecast arm produces no anomalies, so it goes straight to the
+`narrator`. The UI exposes the choice as a selector; `auto` sends per-machine time
 series to OmniAnomaly and latest-bin snapshots to the baseline.
 
 | Node | Role | Uses |
@@ -44,7 +47,7 @@ series to OmniAnomaly and latest-bin snapshots to the baseline.
 | `route_detector` | **conditional edge** — choose the detector arm by mode (+ data shape for `auto`) | — |
 | `detector_baseline` | MAD/EVT robust z-score + POT; order-invariant — fleet snapshots | NumPy/SciPy |
 | `detector_omni` | OmniAnomaly VAE — windows each machine's series for temporal anomalies | PyTorch |
-| `detector_forecast` | Chronos-Bolt zero-shot forecast residuals on a machine's series | PyTorch / transformers |
+| `detector_forecast` | Chronos-Bolt zero-shot **2-day forecast** of a machine's metrics (no anomaly detection) | PyTorch / transformers |
 | `root_cause` | rank the metrics that drove the top anomalies (per-feature MAD deviation) | NumPy |
 | `narrator` | turn the evidence into a human briefing | Gemini |
 
@@ -91,7 +94,8 @@ The exact table/column descriptions the agent sees live in `SCHEMA_HINT` in
 
 ## Detection & evaluation
 
-Three detector arms, graded the same way, each the right tool for a different regime:
+Two anomaly-detection arms (graded the same way) plus a forecast arm, each the right
+tool for a different regime:
 
 - **MAD/EVT baseline** ([`baseline.py`](backend/app/detectors/baseline.py)) — cheap,
   deterministic robust z-score + Peaks-Over-Threshold (SPOT, Siffer et al. 2017).
@@ -102,11 +106,14 @@ Three detector arms, graded the same way, each the right tool for a different re
   globally (see [TRAINING.md](TRAINING.md)) and **served on demand** for per-machine
   temporal anomalies. Mechanisms + deviations: [its README](backend/app/detectors/omnianomaly/README.md).
 - **Chronos-Bolt** ([`chronos.py`](backend/app/detectors/chronos.py)) — Amazon's
-  zero-shot time-series foundation model used as a **forecast-residual** detector:
-  flag points whose actual value falls far outside the model's forecast band.
+  zero-shot time-series foundation model, serving a pure **2-day forecast**: the
+  machine's 5-min series is resampled to hourly means and the model predicts the next
+  48 hours per metric with a q10/q50/q90 uncertainty band — inside its native 64-step
+  single-shot horizon, and short relative to the trace's 8 days of history. No anomaly
+  detection — no scores, thresholds, or flags on this arm.
 
-All three implement the same `score`/`threshold_` shape and are interchangeable behind
-`route_detector`; the user picks one (or `auto`) from the UI selector.
+The two anomaly arms implement the same `score`/`threshold_` shape; all three are
+behind `route_detector` and the user picks one (or `auto`) from the UI selector.
 
 **Metric rigor** ([`metrics.py`](backend/app/eval/metrics.py)): every comparison
 reports **raw best-F1 and AUC-PR (strict, trusted)** alongside **point-adjusted
@@ -201,7 +208,7 @@ cd backend && gcloud run deploy prima-backend --source . --region us-central1 ..
 | Data | BigQuery (cluster by `machine_id`) |
 | Model | Gemini 2.5 Flash on Vertex AI — [`google-genai`](https://github.com/googleapis/python-genai) SDK |
 | Agent | [LangGraph](https://github.com/langchain-ai/langgraph) (fleet + conditional detector route) |
-| Detectors | MAD/EVT (NumPy/SciPy) · OmniAnomaly (PyTorch) · Chronos-Bolt (transformers) — routed |
+| Model arms | MAD/EVT (NumPy/SciPy) · OmniAnomaly (PyTorch) · Chronos-Bolt 2-day forecast (transformers) — routed |
 | Backend | Python 3.13 · [FastAPI](https://fastapi.tiangolo.com/) 0.138 · `uv` |
 | Frontend | [Next.js 16](https://nextjs.org/) (App Router, Turbopack, React 19.2) |
 | Compute | Cloud Run — live (scale-to-zero; no persistent Vertex endpoints) |

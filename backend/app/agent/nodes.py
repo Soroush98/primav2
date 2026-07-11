@@ -9,7 +9,7 @@ import re
 import numpy as np
 
 from app.agent.bigquery_tool import QueryRunner, assert_read_only
-from app.detectors.baseline import BaselineDetector, pot_threshold
+from app.detectors.baseline import BaselineDetector
 from app.eval.metrics import evaluate
 
 # Real schema, introspected from the loaded tables (see warehouse/alibaba_windowing.sql).
@@ -146,8 +146,9 @@ class AgentNodes:
             guidance = (
                 "TEMPORAL mode (for OmniAnomaly / Chronos): return ONE machine's full per-bin "
                 "series from `usage_5min` (machine_id, bin, cpu, mem, net_in, net_out, disk_io) "
-                "ORDERED BY bin — at least ~200 consecutive bins. NEVER hardcode a machine_id; "
-                "pick one from the data (e.g. the machine_id with the most rows)."
+                "ORDERED BY bin — the machine's ENTIRE history (typically ~2000 bins). NEVER "
+                "hardcode a machine_id; pick one from the data (e.g. the machine_id with the "
+                "most rows)."
             )
         else:
             guidance = (
@@ -174,8 +175,9 @@ class AgentNodes:
         return {"sql": sql, "rows": rows}
 
     # ---- detector arms, picked by `route_detector` (a LangGraph conditional edge) ----
-    # Two arms today (baseline, omnianomaly); a 3rd (e.g. a Chronos-Bolt forecaster)
-    # drops in as another `detector_*` node + a `route_detector` branch + a graph entry.
+    # Two anomaly-detection arms (baseline, omnianomaly) plus one FORECAST arm
+    # (Chronos-Bolt), which does no anomaly detection: it forecasts the machine's
+    # metrics 2 days ahead and routes straight to the narrator.
 
     def route_detector(self, state: dict) -> str:
         """Conditional-edge router: choose the detector arm for this request.
@@ -219,33 +221,54 @@ class AgentNodes:
         return self._assemble(rows, cols, scores, thr, "omnianomaly")
 
     def detector_forecast(self, state: dict) -> dict:
-        """Chronos-Bolt forecaster arm — flags points whose actual value falls far
-        outside the model's forecast band. Falls back to the baseline (with a note)
-        when the forecaster isn't enabled or the data isn't a per-machine series."""
+        """Chronos-Bolt forecast arm — NO anomaly detection: resamples the machine's
+        series to hourly and forecasts the next 2 days per metric (q10/q50/q90 band).
+        Falls back to the baseline (with a note) when the forecaster isn't enabled or
+        the data isn't a per-machine series."""
         rows = state.get("rows") or []
         cols, X = _prep(rows)
         if cols is None:
             return _empty_detection(rows)
-        fc = self._forecast_detect(rows)
+        fc = self._forecast(rows)
         if fc is None:
             scores, thr = self._baseline_scores(X)
             note = "Chronos forecaster unavailable / needs a per-machine series; used baseline"
             return self._assemble(rows, cols, scores, thr, "baseline", note=note)
-        scores, thr = fc
-        out = self._assemble(rows, cols, scores, thr, "chronos")
-        detail = getattr(self.forecaster, "last_detail", None)
-        if detail:  # actual-vs-forecast band of the top feature, for the UI plot
-            fi = detail["feature"]
-            out["detection"]["forecast"] = {
-                "feature": self.omni_features[fi] if fi < len(self.omni_features) else f"f{fi}",
-                "actual": detail["actual"],
-                "median": detail["median"],
-                "lo": detail["lo"],
-                "hi": detail["hi"],
-                "score": detail["score"],
-                "threshold": thr,
+        machine, out = fc
+        names = self.omni_features
+        feats = {
+            name: {
+                "history": out["history"][j],
+                "median": out["median"][j],
+                "lo": out["lo"][j],
+                "hi": out["hi"][j],
             }
-        return out
+            for j, name in enumerate(names)
+        }
+        # Compact numbers for the narrator (the full arrays stay UI-only).
+        summary = {
+            name: {
+                "recent_mean_24h": round(float(np.mean(d["history"][-24:])), 2),
+                "forecast_mean": round(float(np.mean(d["median"])), 2),
+                "forecast_p90_peak": round(float(np.max(d["hi"])), 2),
+            }
+            for name, d in feats.items()
+        }
+        return {
+            "feature_cols": cols,
+            "detection": {
+                "n": len(rows),
+                "detector": "chronos",
+                "machine": machine,
+                "horizon_hours": out["horizon_hours"],
+                "forecast_summary": summary,
+                "forecast": {
+                    "machine": machine,
+                    "horizon_hours": out["horizon_hours"],
+                    "features": feats,
+                },
+            },
+        }
 
     def _baseline_scores(self, X: np.ndarray) -> tuple[np.ndarray, float]:
         det = self.detector_factory().fit(X)
@@ -290,7 +313,7 @@ class AgentNodes:
         """Score each machine's per-bin series with ``model.score`` (a model exposing
         ``window`` + ``score(seq)``). Returns ``scores aligned to rows`` or ``None`` when
         it can't apply (no model, missing trained features, or no machine with
-        ``>= window`` bins). Shared by the OmniAnomaly and Chronos arms."""
+        ``>= window`` bins). OmniAnomaly arm only."""
         if model is None:
             return None
         feats = self.omni_features
@@ -328,22 +351,30 @@ class AgentNodes:
         )
         return scores, thr
 
-    def _forecast_detect(self, rows: list[dict]):
-        """Chronos forecast-residual scoring → ``(scores, threshold)`` or ``None``.
-        Threshold is POT over the combined residuals — Chronos is zero-shot, so there's
-        no trained threshold to reuse."""
-        scores = self._series_scores(self.forecaster, rows)
-        if scores is None:
+    def _forecast(self, rows: list[dict]):
+        """Run the Chronos forecast on the machine with the longest series.
+        Returns ``(machine_id, forecast_dict)`` or ``None`` when it can't apply (no
+        forecaster, missing features, or the series is shorter than ``min_bins``)."""
+        fc = self.forecaster
+        if fc is None:
             return None
-        nz = scores[scores > 0]
-        if len(nz) >= 20:
-            try:
-                thr = float(pot_threshold(nz, 1e-3))
-            except Exception:  # noqa: BLE001 — POT can be unstable on short tails
-                thr = float(np.quantile(nz, 0.98))
-        else:
-            thr = float(nz.max()) if len(nz) else float(scores.max())
-        return scores, thr
+        feats = self.omni_features
+        r0 = rows[0]
+        if "machine_id" not in r0 or any(f not in r0 for f in feats):
+            return None
+        groups: dict = {}
+        for i, r in enumerate(rows):
+            groups.setdefault(r["machine_id"], []).append(i)
+        mid, idxs = max(groups.items(), key=lambda kv: len(kv[1]))
+        if len(idxs) < fc.min_bins:
+            return None
+        if "bin" in r0:  # chronological order within the machine
+            idxs = sorted(idxs, key=lambda i: rows[i].get("bin") or 0)
+        seq = np.array(
+            [[float(rows[i].get(f) or 0.0) for f in feats] for i in idxs], dtype=float
+        )
+        out = fc.forecast(seq)
+        return (str(mid), out) if out else None
 
     def root_cause(self, state: dict) -> dict:
         rows = state.get("rows") or []
@@ -366,14 +397,25 @@ class AgentNodes:
         return {"root_cause": {"ranked_features": ranked}}
 
     async def narrator(self, state: dict) -> dict:
-        det = {k: v for k, v in (state.get("detection") or {}).items() if k not in ("points", "forecast")}
+        full = state.get("detection") or {}
+        det = {k: v for k, v in full.items() if k not in ("points", "forecast")}
+        if "forecast_summary" in full:  # Chronos arm: outlook, not anomaly claims
+            days = round(full.get("horizon_hours", 48) / 24)
+            task = (
+                f"Write a concise (3-5 sentence) {days}-day outlook for this machine grounded "
+                "in forecast_summary: the forecast level vs the recent mean per metric, and "
+                "any notable p90 peaks. This is a forecast — make no anomaly claims."
+            )
+        else:
+            task = (
+                "Write a concise (3-5 sentence) reliability briefing grounded in these numbers. "
+                "When citing anomalies, name the machine/bin from top_windows rather than row indices."
+            )
         briefing = await self.llm.generate(
             f"Question: {state['question']}\n"
             f"Detection: {det}\n"
             f"Root cause (top deviating features): {state.get('root_cause')}\n"
-            f"Error: {state.get('error')}\n\n"
-            "Write a concise (3-5 sentence) reliability briefing grounded in these numbers. "
-            "When citing anomalies, name the machine/bin from top_windows rather than row indices.",
+            f"Error: {state.get('error')}\n\n" + task,
             system="You are Prima, a machine-reliability analyst. Be concise and evidence-led.",
         )
         return {"briefing": briefing}

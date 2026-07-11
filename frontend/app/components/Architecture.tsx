@@ -10,7 +10,7 @@ const LINEAR = [
 const ARMS = [
   { name: "detector_baseline", role: "MAD/EVT robust z-score + POT — order-invariant, fleet snapshots.", tag: "NumPy / SciPy" },
   { name: "detector_omni", role: "OmniAnomaly VAE — windows each machine's series for temporal anomalies.", tag: "PyTorch" },
-  { name: "detector_forecast", role: "Chronos-Bolt zero-shot forecast residuals on a machine's series.", tag: "transformers" },
+  { name: "detector_forecast", role: "Chronos-Bolt zero-shot 2-day forecast of a machine's metrics — no anomaly detection.", tag: "transformers" },
 ];
 
 const CLOUD = [
@@ -42,7 +42,8 @@ export default function Architecture() {
         <div className="arms">
           <div className="arms-label">
             ⤷ <code>route_detector</code> picks <strong>one arm</strong> (UI selector, or
-            <strong> Auto</strong> by data shape); all arms converge back into <code>root_cause</code>:
+            <strong> Auto</strong> by data shape); the anomaly arms converge into{" "}
+            <code>root_cause</code>, the forecast arm goes straight to <code>narrator</code>:
           </div>
           <div className="arms-row">
             {ARMS.map((a) => (
@@ -77,7 +78,8 @@ export default function Architecture() {
           <p className="summary" style={{ fontSize: 14 }}>
             Browser → <code>POST /api/analyze</code> → FastAPI → the fleet runs:
             orchestrator → sql_analyst → <strong>⟨route_detector⟩</strong> →{" "}
-            <strong>{"{ baseline | OmniAnomaly | Chronos }"}</strong> → root_cause → narrator.
+            <strong>{"{ baseline | OmniAnomaly }"}</strong> → root_cause → narrator, or{" "}
+            <strong>Chronos</strong> (2-day forecast) → narrator.
             The arm is chosen by the detector selector (or <strong>Auto</strong>, by data shape).
             The only paid calls are managed Gemini API calls and BigQuery queries — there are{" "}
             <strong>no persistent Vertex endpoints</strong>: OmniAnomaly is trained offline then

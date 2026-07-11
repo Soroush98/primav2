@@ -50,6 +50,8 @@ export default function Home() {
   const n = det?.n ?? 0;
   const flagged = det?.flagged ?? 0;
   const flagRate = n > 0 ? (flagged / n) * 100 : 0;
+  const isForecast = det?.detector === "chronos" && !!det?.forecast;
+  const horizonDays = Math.round((det?.horizon_hours ?? 48) / 24);
 
   const trace: { agent: string; status: Status; detail: string }[] = result
     ? [
@@ -64,13 +66,19 @@ export default function Home() {
           status: n > 0 ? "ok" : "warn",
           detail:
             n > 0
-              ? `${det?.detector ?? "baseline"} · flagged ${flagged} of ${n.toLocaleString()}`
+              ? isForecast
+                ? `chronos · ${horizonDays}-day forecast (${det?.machine ?? "?"})`
+                : `${det?.detector ?? "baseline"} · flagged ${flagged} of ${n.toLocaleString()}`
               : det?.note ?? "no rows",
         },
         {
           agent: "root_cause",
-          status: ranked.length ? "ok" : "warn",
-          detail: ranked.length ? `top driver: ${ranked[0][0]}` : "no features",
+          status: isForecast || ranked.length ? "ok" : "warn",
+          detail: isForecast
+            ? "skipped — forecast arm"
+            : ranked.length
+              ? `top driver: ${ranked[0][0]}`
+              : "no features",
         },
         { agent: "narrator", status: result.briefing ? "ok" : "warn", detail: "briefing ready" },
       ]
@@ -89,8 +97,8 @@ export default function Home() {
       </div>
       <div className="subtitle">
         A LangGraph agent fleet that autonomously writes read-only SQL, then{" "}
-        <strong>routes to one of three anomaly detectors</strong> (MAD/EVT · OmniAnomaly ·
-        Chronos-Bolt) and diagnoses root cause over <strong>Alibaba cluster-trace-v2018</strong>{" "}
+        <strong>routes to one of three model arms</strong> (MAD/EVT and OmniAnomaly anomaly
+        detection · a 2-day Chronos-Bolt forecast) over <strong>Alibaba cluster-trace-v2018</strong>{" "}
         telemetry (~247M samples) in BigQuery — reasoned by Gemini 2.5 Flash on Vertex AI.
       </div>
 
@@ -123,7 +131,7 @@ export default function Home() {
               <option value="auto">Auto</option>
               <option value="baseline">Baseline (snapshot)</option>
               <option value="omnianomaly">OmniAnomaly (temporal)</option>
-              <option value="forecast">Chronos (forecast)</option>
+              <option value="forecast">Chronos (2-day forecast)</option>
             </select>
             <button onClick={() => run(question)} disabled={loading || !question.trim()}>
               {loading ? <span className="spinner" /> : "Analyze"}
@@ -162,14 +170,29 @@ export default function Home() {
                   <h3>Windows analyzed</h3>
                   <div className="kpi">{n.toLocaleString()}</div>
                 </div>
-                <div className="card">
-                  <h3>Anomalies flagged</h3>
-                  <div className={`kpi ${flagged > 0 ? "warn" : "good"}`}>{flagged.toLocaleString()}</div>
-                </div>
-                <div className="card">
-                  <h3>Flag rate</h3>
-                  <div className="kpi">{flagRate.toFixed(1)}<small> %</small></div>
-                </div>
+                {isForecast ? (
+                  <>
+                    <div className="card">
+                      <h3>Forecast horizon</h3>
+                      <div className="kpi">{horizonDays}<small> days</small></div>
+                    </div>
+                    <div className="card">
+                      <h3>Machine</h3>
+                      <div className="kpi" style={{ fontSize: 20 }}>{det?.machine ?? "—"}</div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="card">
+                      <h3>Anomalies flagged</h3>
+                      <div className={`kpi ${flagged > 0 ? "warn" : "good"}`}>{flagged.toLocaleString()}</div>
+                    </div>
+                    <div className="card">
+                      <h3>Flag rate</h3>
+                      <div className="kpi">{flagRate.toFixed(1)}<small> %</small></div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="grid cols-2">
@@ -194,10 +217,10 @@ export default function Home() {
               {((det?.points && det.points.length > 0) || det?.forecast) && (
                 <>
                   <div className="section-title">
-                    {det?.detector === "chronos" && det?.forecast ? "Forecast vs actual" : "Anomaly windows"}
+                    {isForecast ? `${horizonDays}-day forecast` : "Anomaly windows"}
                   </div>
                   <div className="card">
-                    {det?.detector === "chronos" && det?.forecast ? (
+                    {isForecast && det ? (
                       <ForecastChart det={det} />
                     ) : (
                       <ScoreChart det={det} />

@@ -1,21 +1,16 @@
-"""Chronos-Bolt forecaster as a forecast-residual anomaly detector — the 3rd arm.
+"""Chronos-Bolt zero-shot forecaster — the 3rd arm.
 
-Zero-shot (no training): for each feature's univariate series, forecast each recent
-point from its preceding ``context`` values and score how far the actual value falls
-outside the predicted quantile band (q10..q90). Residuals are averaged across features
-to a per-timestep anomaly score. Same ``window`` / ``score`` / ``threshold_`` shape as
-the other arms so ``detector_forecast`` can use it interchangeably.
-
-Cost-bounded: only the most recent ``max_score`` points of each series are scored
-(forecasting every point of a long series on CPU is expensive), and all (feature,
-position) contexts go through the model in a single batched ``predict`` call.
+Forecast-only (no anomaly detection): resample a machine's 5-min series to hourly
+means, then forecast the next ``horizon_hours`` (default 2 days) for every feature
+in one batched ``predict_quantiles`` call, returning the q10/q50/q90 band. The
+hourly resample keeps the default horizon at 48 steps — inside the model's native
+64-step single-shot range (at raw 5-min resolution it would be 576 steps, forcing
+the pipeline's degraded autoregressive rollout).
 """
 
 from __future__ import annotations
 
 import numpy as np
-
-from app.detectors.baseline import pot_threshold
 
 
 class ChronosForecaster:
@@ -23,10 +18,11 @@ class ChronosForecaster:
         self,
         model_name: str = "amazon/chronos-bolt-small",
         *,
-        context: int = 64,
-        max_score: int = 256,
+        horizon_hours: int = 2 * 24,
+        bin_seconds: int = 300,
+        min_context_hours: int = 24,
+        max_context_hours: int = 512,
         device: str = "cpu",
-        q: float = 1e-3,
     ) -> None:
         import torch
         from chronos import BaseChronosPipeline
@@ -37,65 +33,40 @@ class ChronosForecaster:
             model_name, device_map=device, torch_dtype=dtype
         )
         self.model_name = model_name
-        self.context = context
-        self.window = context  # min bins per machine to apply (routing parity with omni)
-        self.max_score = max_score
-        self.q = q
-        self.threshold_: float | None = None
-        # actual-vs-forecast detail of the top-residual feature, for the UI plot.
-        self.last_detail: dict | None = None
+        self.horizon_hours = horizon_hours
+        self.bins_per_hour = max(1, 3600 // bin_seconds)
+        self.min_bins = min_context_hours * self.bins_per_hour  # series check in nodes
+        self.max_context_hours = max_context_hours
 
-    def score(self, X: np.ndarray) -> np.ndarray:
-        """``X``: (T, F) per-machine series → (T,) forecast-residual anomaly score."""
+    def forecast(self, X: np.ndarray) -> dict | None:
+        """``X``: (T, F) per-machine 5-min series → hourly history + 2-day forecast.
+
+        Returns ``{"history": (F, Hh), "median"/"lo"/"hi": (F, horizon), "horizon_hours"}``
+        (arrays as lists), or ``None`` when the series is too short — the caller
+        falls back to the baseline.
+        """
         X = np.asarray(X, dtype=np.float32)
         t, f = X.shape
-        scores = np.zeros(t, dtype=float)
-        self.last_detail = None
-        if t <= self.context:
-            return scores  # too short to forecast — caller falls back
+        bph = self.bins_per_hour
+        hours = t // bph
+        if t < self.min_bins or hours < 2:
+            return None
 
-        start = max(self.context, t - self.max_score)  # score only the recent window
-        positions = np.arange(start, t)
+        # Trailing full hours → hourly means, capped to bound cost and payload size.
+        tail = X[t - hours * bph :]
+        hourly = tail.reshape(hours, bph, f).mean(axis=1).T  # (F, hours)
+        hourly = hourly[:, -self.max_context_hours :]
 
-        # One batched predict over every (feature, position) context window.
-        ctx = np.stack(
-            [X[p - self.context : p, j] for j in range(f) for p in positions]
-        )  # (F * P, context)
         q, _ = self.pipe.predict_quantiles(
-            inputs=self._torch.tensor(ctx, dtype=self._torch.float32),
-            prediction_length=1,
+            inputs=self._torch.tensor(hourly, dtype=self._torch.float32),
+            prediction_length=self.horizon_hours,
             quantile_levels=[0.1, 0.5, 0.9],
         )
-        qn = q.float().cpu().numpy()[:, 0, :]  # (F*P, 3) → q10, q50, q90
-        lo, med, hi = qn[:, 0], qn[:, 1], qn[:, 2]
-        actual = np.concatenate([X[positions, j] for j in range(f)])
-        resid = np.abs(actual - med) / np.maximum(hi - lo, 1e-6)
-        p = len(positions)
-        per_feat = resid.reshape(f, p)  # (F, P)
-        agg = per_feat.mean(axis=0)
-        scores[positions] = agg
-
-        # Stash actual-vs-forecast for the most-deviating feature (drives the UI plot).
-        top = int(per_feat.mean(axis=1).argmax())
-        self.last_detail = {
-            "feature": top,
-            "actual": actual.reshape(f, p)[top].tolist(),
-            "median": med.reshape(f, p)[top].tolist(),
-            "lo": lo.reshape(f, p)[top].tolist(),
-            "hi": hi.reshape(f, p)[top].tolist(),
-            "score": agg.tolist(),
+        qn = q.float().cpu().numpy()  # (F, horizon, 3) → q10, q50, q90
+        return {
+            "history": hourly.tolist(),
+            "lo": qn[:, :, 0].tolist(),
+            "median": qn[:, :, 1].tolist(),
+            "hi": qn[:, :, 2].tolist(),
+            "horizon_hours": int(self.horizon_hours),
         }
-
-        nz = scores[scores > 0]
-        if len(nz) >= 20:
-            try:
-                self.threshold_ = float(pot_threshold(nz, self.q))
-            except Exception:  # noqa: BLE001 — POT can be unstable on short tails
-                self.threshold_ = float(np.quantile(nz, 0.98))
-        else:
-            self.threshold_ = float(nz.max()) if len(nz) else 1.0
-        return scores
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        s = self.score(X)
-        return (s >= (self.threshold_ or s.max())).astype(int)
