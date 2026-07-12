@@ -227,17 +227,24 @@ export default function Home() {
                     )}
                     {det.top_windows && det.top_windows.length > 0 && (
                       <div style={{ marginTop: 14 }}>
-                        <h3>Top flagged windows</h3>
+                        <h3>{flagged > 0 ? "Top flagged windows" : "Top windows by score (none flagged)"}</h3>
                         <div className="chips">
-                          {det.top_windows.map((w) => (
-                            <span
-                              key={w.i}
-                              className="chip"
-                              style={{ color: "var(--bad)", borderColor: "#5e1e1e", cursor: "default" }}
-                            >
-                              {w.label} · {fmt(w.score)}
-                            </span>
-                          ))}
+                          {det.top_windows.map((w) => {
+                            const isFlagged = det.threshold != null && w.score >= det.threshold;
+                            return (
+                              <span
+                                key={w.i}
+                                className="chip"
+                                style={
+                                  isFlagged
+                                    ? { color: "var(--bad)", borderColor: "#5e1e1e", cursor: "default" }
+                                    : { cursor: "default" }
+                                }
+                              >
+                                {w.label} · {fmt(w.score)}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                     )}

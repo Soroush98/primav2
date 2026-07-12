@@ -12,9 +12,14 @@ export default function ScoreChart({ det }: { det: Detection }) {
   const H = 240;
   const PAD = 34;
   const maxI = Math.max(...pts.map((p) => p.i), 1);
-  const maxS = Math.max(det.score_max ?? 0, det.threshold ?? 0, ...pts.map((p) => p.score), 1e-9);
+  // Scores can be negative (OmniAnomaly: negative recon log-prob), so the y-domain
+  // must span the actual data range — anchored at 0 only when scores sit above it.
+  const scoreVals = pts.map((p) => p.score);
+  const maxS = Math.max(det.score_max ?? -Infinity, det.threshold ?? -Infinity, ...scoreVals);
+  const minS = Math.min(0, det.threshold ?? Infinity, ...scoreVals);
+  const span = maxS - minS || 1e-9;
   const x = (i: number) => PAD + (i / maxI) * (W - 2 * PAD);
-  const y = (s: number) => H - PAD - (s / maxS) * (H - 2 * PAD);
+  const y = (s: number) => H - PAD - ((s - minS) / span) * (H - 2 * PAD);
   const thrY = det.threshold != null ? y(det.threshold) : null;
 
   return (
