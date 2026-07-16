@@ -35,7 +35,7 @@ jobs:
           uv sync
           uv run ruff check app scripts tests
           # torch-only tests self-skip (importorskip); BQ_INTEGRITY suite self-skips
-          uv run pytest -q --cov=app --cov-fail-under=75
+          uv run pytest -q --cov=app --cov-fail-under=80
 
       - name: Frontend — set up Node
         uses: actions/setup-node@v6

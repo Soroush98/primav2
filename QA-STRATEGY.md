@@ -70,9 +70,12 @@ Named ISTQB black-box techniques, applied where they pay:
 
 A change may merge when [`ci.yml`](.github/workflows/ci.yml) is green:
 
-- backend: ruff clean · pytest green · line coverage ≥ **75%** (tripwire against
-  untested new code — the number is a floor, not a target; GCP/torch-bound
-  modules are exercised by opt-in suites instead)
+- backend: ruff clean · pytest green · line coverage ≥ **80%** of the
+  unit-testable surface (a tripwire against untested new code — the number is a
+  floor, not a target). Modules that cannot execute in the lean env — torch-gated
+  detectors, live Vertex/BigQuery/GCS clients — are omitted from the metric (see
+  `[tool.coverage.run]` in `backend/pyproject.toml`) so the number means the same
+  locally and in CI; they are covered by the opt-in live suites and e2e instead.
 - frontend: eslint clean · vitest green · production build succeeds
 - e2e: smoke + regression on desktop **and** mobile viewports, including axe
   scans with zero serious/critical violations

@@ -2,7 +2,7 @@
 # (Pushes to main are gated by deploy.yml's own verify job, so main isn't doubled.)
 #
 # Exit criteria enforced here (see QA-STRATEGY.md):
-#   backend   — ruff clean, pytest green, line coverage >= 75%
+#   backend   — ruff clean, pytest green, line coverage >= 80% (unit-testable surface — see pyproject omit list)
 #   frontend  — eslint clean, vitest green, production build succeeds
 #   e2e       — Playwright smoke + regression on desktop & mobile viewports
 #               (incl. axe accessibility scan), against the stubbed backend
@@ -37,7 +37,7 @@ jobs:
         # torch-only tests self-skip (importorskip); live BQ data-quality tests
         # self-skip unless BQ_INTEGRITY=1. The threshold is a tripwire against
         # untested new code, not a target — see QA-STRATEGY.md.
-        run: uv run pytest -q --cov=app --cov-report=term --cov-report=xml --cov-fail-under=75
+        run: uv run pytest -q --cov=app --cov-report=term --cov-report=xml --cov-fail-under=80
       - uses: actions/upload-artifact@v7
         if: always()
         with:

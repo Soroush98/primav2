@@ -49,3 +49,18 @@ extend-immutable-calls = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]
+
+[tool.coverage.run]
+# Coverage measures the surface that CAN run in the lean env (no torch, no GCP),
+# so the number means the same locally and in CI. The omitted modules are covered
+# elsewhere, not ignored (QA-STRATEGY §5): torch-gated code by test_omnianomaly.py
+# when the ml group is installed; live-cloud clients by the BQ_INTEGRITY suite,
+# deployed smoke, and the k6 soak.
+omit = [
+    "app/detectors/omnianomaly/*",  # torch-gated (uv sync --group ml)
+    "app/detectors/chronos.py",     # torch-gated
+    "app/eval/benchmark.py",        # drives the torch-gated detectors
+    "app/llm/gemini.py",            # live Vertex AI client
+    "app/data/load_bigquery.py",    # live BigQuery streaming
+    "app/detectors/model_store.py", # live GCS checkpoint fetch
+]
