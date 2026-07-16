@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 // playwright.config.ts). The stub 401s on a missing/wrong X-API-Key, so the happy
 // paths below also verify the proxy's server-side key and IP forwarding wiring.
 
-test("analyze renders briefing, KPIs, score chart, root cause and SQL", async ({ page }) => {
+test("analyze renders briefing, KPIs, score chart, root cause and SQL", { tag: "@smoke" }, async ({ page }) => {
   await page.goto("/");
   await page.getByPlaceholder(/Ask about a machine/).fill("Which machines look anomalous?");
   await page.getByRole("button", { name: "Analyze" }).click();
@@ -22,7 +22,7 @@ test("analyze renders briefing, KPIs, score chart, root cause and SQL", async ({
   await expect(page.locator("pre.sql")).toContainText("SELECT machine_id");
 });
 
-test("forecast arm renders the Chronos chart with switchable feature chips", async ({ page }) => {
+test("forecast arm renders the Chronos chart with switchable feature chips", { tag: "@smoke" }, async ({ page }) => {
   await page.goto("/");
   await page.locator("select").selectOption("forecast");
   await page.getByRole("button", { name: "Analyze" }).click();
@@ -37,7 +37,7 @@ test("forecast arm renders the Chronos chart with switchable feature chips", asy
   await expect(page.getByText("mem · m_1043")).toBeVisible();
 });
 
-test("a backend failure surfaces the error card", async ({ page }) => {
+test("a backend failure surfaces the error card", { tag: "@smoke" }, async ({ page }) => {
   await page.goto("/");
   await page.getByPlaceholder(/Ask about a machine/).fill("boom");
   await page.getByRole("button", { name: "Analyze" }).click();

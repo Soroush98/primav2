@@ -66,6 +66,23 @@ const forecast = (question) => ({
   root_cause: null,
 });
 
+// Renderable "no data" response — the shape detector_baseline returns when the
+// generated SQL matched nothing (see _empty_detection in backend nodes.py).
+const empty = (question) => ({
+  question,
+  briefing: "No telemetry rows matched the query — nothing to score.",
+  focus: { metric: "cpu" },
+  sql: "SELECT machine_id, cpu FROM `demo.windows` WHERE 1 = 0",
+  detection: { n: 0, flagged: 0, note: "no rows returned" },
+  root_cause: null,
+});
+
+// FastAPI-shaped quota rejection (see backend app/api/quota.py) so e2e can assert
+// the UI's behavior when a visitor exhausts the per-IP search quota.
+const QUOTA_DETAIL = {
+  detail: { code: "quota_exceeded", message: "search limit reached (10 per 86400s); try again later" },
+};
+
 const server = createServer((req, res) => {
   const send = (status, payload) => {
     res.writeHead(status, { "Content-Type": "application/json" });
@@ -80,6 +97,8 @@ const server = createServer((req, res) => {
   req.on("end", () => {
     const { question = "", detector = "auto" } = JSON.parse(body || "{}");
     if (/boom/i.test(question)) return send(503, { detail: "backend exploded (stub)" });
+    if (/quota/i.test(question)) return send(429, QUOTA_DETAIL);
+    if (/quiet fleet/i.test(question)) return send(200, empty(question));
     send(200, detector === "forecast" ? forecast(question) : baseline(question));
   });
 });

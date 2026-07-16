@@ -1,0 +1,110 @@
+# CI quality gate — runs the full pyramid on every PR / non-main push.
+# (Pushes to main are gated by deploy.yml's own verify job, so main isn't doubled.)
+#
+# Exit criteria enforced here (see QA-STRATEGY.md):
+#   backend   — ruff clean, pytest green, line coverage >= 75%
+#   frontend  — eslint clean, vitest green, production build succeeds
+#   e2e       — Playwright smoke + regression on desktop & mobile viewports
+#               (incl. axe accessibility scan), against the stubbed backend
+#   audit     — no known HIGH+ vulnerabilities in production dependencies
+#
+# Recommended branch protection on main: require "backend", "frontend", "e2e".
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8
+      - name: Sync dependencies
+        run: uv sync
+      - name: Lint
+        run: uv run ruff check app scripts tests
+      - name: Tests + coverage gate
+        # torch-only tests self-skip (importorskip); live BQ data-quality tests
+        # self-skip unless BQ_INTEGRITY=1. The threshold is a tripwire against
+        # untested new code, not a target — see QA-STRATEGY.md.
+        run: uv run pytest -q --cov=app --cov-report=term --cov-report=xml --cov-fail-under=75
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'          # match frontend/Dockerfile (node:24-slim)
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests (vitest)
+        run: npm run test
+      - name: Production build
+        run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Install Playwright browser
+        # chromium serves both the desktop and mobile-chrome projects
+        run: npx playwright install --with-deps chromium
+      - name: Playwright e2e (smoke + regression, desktop + mobile)
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-traces
+          path: frontend/test-results/
+          retention-days: 7
+
+  audit:
+    # Dependency vulnerability gate on PRODUCTION deps (SECURITY.md rec #5).
+    # A new upstream advisory can redden this without a code change — that is the
+    # point of a gate; triage it, don't mute it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8
+      - name: pip-audit (backend, prod deps)
+        working-directory: backend
+        run: |
+          uv export --no-dev --no-emit-project --format requirements-txt -o /tmp/req.txt
+          uvx pip-audit --strict -r /tmp/req.txt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: npm audit (frontend, prod deps, high+)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high

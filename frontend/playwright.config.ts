@@ -17,7 +17,19 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${FRONTEND_PORT}`,
     trace: "on-first-retry",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // Same chromium binary — mobile coverage without an extra browser download.
+    { name: "mobile-chrome", use: { ...devices["Pixel 7"] } },
+    // Cross-engine runs are opt-in (they need `npx playwright install firefox webkit`):
+    //   PW_ALL_BROWSERS=1 npm run test:e2e
+    ...(process.env.PW_ALL_BROWSERS
+      ? [
+          { name: "firefox", use: { ...devices["Desktop Firefox"] } },
+          { name: "webkit", use: { ...devices["Desktop Safari"] } },
+        ]
+      : []),
+  ],
   webServer: [
     {
       command: `node e2e/stub-backend.mjs ${STUB_PORT} ${API_KEY}`,

@@ -37,3 +37,7 @@ data/
 *.ckpt
 *.pt
 omni_out/
+
+# test/coverage artifacts
+.coverage
+coverage.xml

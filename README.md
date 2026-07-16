@@ -153,10 +153,14 @@ primav2/
 │  │  ├─ detectors/                 baseline.py · omnianomaly/
 │  │  └─ eval/                      metrics.py · benchmark.py
 │  ├─ scripts/                      run_alibaba_benchmark.py · validate_smd.py
-│  └─ tests/                        11 tests (pytest)
+│  └─ tests/                        pytest: unit · API contract · security · data integrity
 ├─ frontend/                        Next.js 16 dashboard (App Router, React 19.2)
-│  └─ app/                          page.tsx · components/Architecture.tsx · lib/api.ts
+│  ├─ app/                          page.tsx · components/Architecture.tsx · lib/api.ts
+│  └─ e2e/                          Playwright (desktop + mobile) + stub backend
+├─ docs/                            user-stories.md · test-cases/ (catalog + traceability)
+├─ loadtest/                        k6 perf suites · PERF-PLAN.md · recorded results
 ├─ warehouse/                       alibaba_windowing.sql + benchmark/validation reports
+├─ QA-STRATEGY.md                   risk-based test strategy (levels, gates, defects)
 └─ scripts/get_alibaba.sh           download trace → load into BigQuery
 ```
 
@@ -189,6 +193,28 @@ Tests: `uv run --directory backend pytest` (the OmniAnomaly/benchmark tests also
 `--group ml`).
 
 ---
+
+## Quality & testing
+
+Strategy, risk analysis and gates: [QA-STRATEGY.md](QA-STRATEGY.md) · user
+stories + acceptance criteria: [docs/user-stories.md](docs/user-stories.md) ·
+test cases + traceability: [docs/test-cases/](docs/test-cases/) · performance:
+[loadtest/PERF-PLAN.md](loadtest/PERF-PLAN.md). CI
+([.github/workflows/ci.yml](.github/workflows/ci.yml)) gates every PR on all of
+the below except the opt-in suites.
+
+```bash
+# backend: lint + unit/API/security/data-integrity tests + coverage gate
+cd backend && uv run ruff check app scripts tests && uv run pytest --cov=app
+
+# frontend: unit (vitest) + e2e (Playwright, desktop & mobile, incl. axe a11y)
+cd frontend && npm run test && npm run test:e2e          # or test:e2e:smoke
+
+# opt-in: live BigQuery data-quality · cross-engine e2e · perf
+BQ_INTEGRITY=1 uv run pytest tests/test_data_integrity.py   # backend/
+PW_ALL_BROWSERS=1 npm run test:e2e                          # frontend/
+k6 run loadtest/health-ramp.js                              # see PERF-PLAN.md
+```
 
 ## Deploy
 

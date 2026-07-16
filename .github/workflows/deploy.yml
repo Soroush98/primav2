@@ -27,14 +27,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Backend — lint + tests
+      - name: Backend — lint + tests + coverage gate
         working-directory: backend
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           export PATH="$HOME/.local/bin:$PATH"
           uv sync
-          uv run ruff check app scripts
-          uv run pytest -q          # torch-only tests self-skip (importorskip)
+          uv run ruff check app scripts tests
+          # torch-only tests self-skip (importorskip); BQ_INTEGRITY suite self-skips
+          uv run pytest -q --cov=app --cov-fail-under=75
 
       - name: Frontend — set up Node
         uses: actions/setup-node@v6
@@ -50,6 +51,19 @@ jobs:
           npm run lint
           npm run test              # vitest: proxy route, api client, chart components
           npm run build
+
+      - name: Frontend — e2e (Playwright, desktop + mobile, incl. axe a11y)
+        # Same gate as ci.yml: a deploy must never ship what a PR couldn't merge.
+        working-directory: frontend
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-traces
+          path: frontend/test-results/
+          retention-days: 7
 
   # ------------------------------------------------------------- backend
   backend:

@@ -1,0 +1,80 @@
+# Bug report template — mirrors the fields a Jira bug would carry (severity and
+# priority are independent axes; definitions in QA-STRATEGY.md §9).
+name: Bug report
+description: A defect a stranger can reproduce and act on
+title: "[BUG] <what is wrong, not just 'X broken'>"
+labels: [bug, triage]
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: Environment & revision
+      description: Where it happened and on what code.
+      placeholder: "local dev / Cloud Run prod · commit 09eb083 · Chrome 138 on macOS / Pixel 7"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, numbered, from a clean state. Include the exact question/detector mode if relevant.
+      placeholder: |
+        1. Open the dashboard
+        2. Select detector "forecast"
+        3. Ask "…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened — cite the requirement or test case (REQ-*/TC-*) if known.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Screenshot, response body, log line (`jsonPayload.event="search"`), k6 output, Playwright trace — whatever proves it.
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity (impact)
+      options:
+        - S1 — data loss / security breach / total outage
+        - S2 — core flow broken, no workaround
+        - S3 — degraded, workaround exists
+        - S4 — cosmetic / trivial
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority (urgency — independent of severity)
+      options:
+        - P1 — fix now
+        - P2 — this iteration
+        - P3 — scheduled
+        - P4 — opportunistic
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: regression
+    attributes:
+      label: Definition of done
+      options:
+        - label: Fix includes a regression test that failed before the fix (link it to this issue)

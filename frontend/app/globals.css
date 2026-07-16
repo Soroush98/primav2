@@ -94,6 +94,16 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 }
 .ask select:focus { border-color: var(--accent); }
 
+/* BUG-001: on narrow viewports the no-wrap row overflowed and the select/wrap
+   overlapped the Analyze button, making it unclickable on phones. Wrap instead:
+   input on its own line, select + button share the second. */
+@media (max-width: 640px) {
+  .ask { flex-wrap: wrap; }
+  .ask input { flex: 1 1 100%; }
+  .ask select { flex: 1; padding: 12px; }
+  .ask button { padding: 12px 22px; }
+}
+
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
 .chip {
   font-family: inherit; font-size: 12px; color: var(--muted); background: var(--panel-2);

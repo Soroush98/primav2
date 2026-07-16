@@ -278,7 +278,10 @@ export default function Home() {
                 <>
                   <div className="section-title">Generated SQL (read-only)</div>
                   <div className="card">
-                    <pre className="sql">{result.sql}</pre>
+                    {/* BUG-002: scrollable region must be keyboard-reachable (WCAG 2.1.1) */}
+                    <pre className="sql" tabIndex={0} role="region" aria-label="Generated SQL">
+                      {result.sql}
+                    </pre>
                   </div>
                 </>
               )}
