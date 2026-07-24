@@ -29,7 +29,7 @@ dev = [
 # Heavy ML deps for the OmniAnomaly + Chronos arms — kept out of the lean dev install.
 # Install with: uv sync --group ml
 ml = [
-    "torch>=2.4",
+    "torch>=2.13.0",
     "chronos-forecasting>=1.5",  # Chronos-Bolt forecaster arm (pulls transformers)
 ]
 
